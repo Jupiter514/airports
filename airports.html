@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>ECharts中国地图</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/china.js"></script>
+    <style>
+        body, html {
+          height: 100%;
+          margin: 0;
+        }
+        #chart-container {
+          width: 100%;
+          height: 100%;
+        }
+    </style>
+</head>
+<body>
+<div id="chart-container"></div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const chart = echarts.init(document.getElementById('chart-container'));
+      const capitalCities = {
+        '北京': [116.4074, 39.9042],
+        '天津': [117.1901, 39.1256],
+        '石家庄': [114.5149, 38.0371],
+        '太原': [112.5493, 37.8572],
+        '呼和浩特': [111.6707, 40.8185],
+        '沈阳': [123.4290, 41.7967],
+        '长春': [125.3245, 43.8868],
+        '哈尔滨': [126.6425, 45.7569],
+        '上海': [121.4737, 31.2304],
+        '南京': [118.7674, 32.0415],
+        '杭州': [120.1536, 30.2874],
+        '合肥': [117.2856, 31.8612],
+        '福州': [119.2959, 26.0766],
+        '南昌': [115.8921, 28.6765],
+        '济南': [117.0009, 36.6758],
+        '郑州': [113.6654, 34.7579],
+        '武汉': [114.2985, 30.5843],
+        '长沙': [112.9834, 28.1127],
+        '广州': [113.2806, 23.1251],
+        '南宁': [108.2901, 22.8406],
+        '海口': [110.3311, 20.0319],
+        '重庆': [106.5049, 29.5331],
+        '成都': [104.0658, 30.5728],
+        '贵阳': [106.7134, 26.5784],
+        '昆明': [102.7122, 25.0406],
+        '拉萨': [91.1105, 29.6441],
+        '西安': [108.9480, 34.2631],
+        '兰州': [103.8343, 36.0611],
+        '西宁': [101.7790, 36.6172],
+        '银川': [106.2324, 38.4864],
+        '乌鲁木齐': [87.6177, 43.8267],
+        '台北': [121.5654, 25.0330]
+      };
+      const capitalData = Object.entries(capitalCities).map(([name, coords]) => ({
+        name,
+        value: [...coords, 10] // 第三个值可用于控制大小
+      }));
+      const option = {
+        title: { text: '中国地图', left: 'center' },
+        tooltip: {
+          trigger: 'item',
+          formatter: function(params) {
+             return params.name;
+          }
+        },
+        geo: {
+          map: 'china',
+          roam: true,
+          zoom: 1.2,
+          itemStyle: {
+            normal: { areaColor: '#f0f0f0', borderColor: '#111' },
+            emphasis: { areaColor: '#e0e0e0' }
+          }
+        },
+        series: [{
+          type: 'effectScatter',
+          coordinateSystem: 'geo',
+          data: capitalData,
+          symbolSize: 5,//标记大小
+          showEffectOn: 'render',
+          rippleEffect: {
+            brushType: 'stroke',
+            color:'#00FF00'
+          },
+          label: {
+            show: true,
+            position: 'right',  // 标签位置
+            formatter: '{b}',   // 标签内容
+            textStyle: {
+              color: '#FF0000',
+              fontSize: 12
+            }
+          },
+          itemStyle: {
+            color: '#ff44aa',
+            shadowBlur: 10,
+            shadowColor: '#333'
+          },
+          zlevel: 2  // 确保显示在地图上层
+        }]
+      };
+
+      chart.setOption(option);
+      window.addEventListener('resize', () => chart.resize());
+    });
+</script>
+</body>
+</html>
