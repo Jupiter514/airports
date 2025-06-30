@@ -2,26 +2,64 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>ECharts中国地图</title>
+    <title>航班数据可视化</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/china.js"></script>
     <style>
         body, html {
           height: 100%;
           margin: 0;
+          background-image: url('C919.png'); /* 替换成实际图片路径，如本地图片放项目目录可写"c919.jpg"，在线图片用完整URL */
+          background-size: cover; /* 让背景图覆盖整个页面 */
+          background-position: center; /* 背景图居中显示 */
+          background-repeat: no-repeat; /* 不重复平铺 */
         }
         #chart-container {
           width: 100%;
           height: 100%;
         }
+        .toolbox {
+          position: absolute;
+          bottom: 30px;
+          left: 30px;
+          background: rgba(255,255,255,0.8);
+          padding: 15px 20px; /* 增加内边距，为居中布局留出空间 */
+          border-radius: 8px;
+          box-shadow: 0 0 10px rgba(0,0,0,0.2);
+          z-index: 100;
+        }
+        #selection-status {
+          text-align: center; /* 状态文本居中 */
+          margin-bottom: 10px; /* 状态文本与按钮间距 */
+        }
+        #reset-btn {
+          display: block; /* 块级元素便于居中 */
+          margin: 0 auto; /* 水平居中 */
+          padding: 6px 12px;
+          background-color: #007bff;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        #reset-btn:hover {
+          background-color: #0069d9;
+        }
     </style>
 </head>
 <body>
 <div id="chart-container"></div>
+<div class="toolbox" id="toolbox">
+    <div id="selection-status">请点击选择第一个省会城市</div>
+    <button id="reset-btn">重置选择</button>
+</div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
       const chart = echarts.init(document.getElementById('chart-container'));
+      const resetBtn = document.getElementById('reset-btn');
+      const selectionStatus = document.getElementById('selection-status');
+
       const capitalCities = {
         '北京': [116.4074, 39.9042],
         '天津': [117.1901, 39.1256],
@@ -56,16 +94,33 @@
         '乌鲁木齐': [87.6177, 43.8267],
         '台北': [121.5654, 25.0330]
       };
+
+      // 初始化省会数据，添加选中状态
       const capitalData = Object.entries(capitalCities).map(([name, coords]) => ({
         name,
-        value: [...coords, 10] // 第三个值可用于控制大小
+        value: [...coords, 10],
+        selected: false // 选中状态
       }));
-      const option = {
-        title: { text: '中国地图', left: 'center' },
+
+      // 基础配置（分离配置项，便于重置时保留）
+      const baseOption = {
+        title: {
+           text: '中国地图',
+           left: 'center',
+           textStyle: {
+              color:'#0000FF',
+              fontSize:30,
+              fontFamily: 'KaiTi',
+           }
+        },
         tooltip: {
+          textStyle:{
+             color:'#00BFFF',
+             fontFamily:'KaiTi',
+          },
           trigger: 'item',
           formatter: function(params) {
-             return params.name;
+             return params.name
           }
         },
         geo: {
@@ -81,31 +136,246 @@
           type: 'effectScatter',
           coordinateSystem: 'geo',
           data: capitalData,
-          symbolSize: 5,//标记大小
+          symbolSize: 7,
           showEffectOn: 'render',
           rippleEffect: {
             brushType: 'stroke',
-            color:'#00FF00'
+            color:'#00FFFF'
           },
           label: {
             show: true,
-            position: 'right',  // 标签位置
-            formatter: '{b}',   // 标签内容
+            position: 'right',
+            formatter: '{b}',
             textStyle: {
-              color: '#FF0000',
+              color: '#0000FF',
               fontSize: 12
             }
           },
           itemStyle: {
-            color: '#ff44aa',
+            color: function(params) {
+              return params.data.selected ? '#FF44AA' : '#00FFFF';
+            },
             shadowBlur: 10,
             shadowColor: '#333'
           },
-          zlevel: 2  // 确保显示在地图上层
+          zlevel: 2
         }]
       };
 
-      chart.setOption(option);
+      chart.setOption(baseOption);
+
+      // 选中的城市（from, to）
+      let selectedCities = { from: null, to: null };
+      // 飞线系列ID
+      const FLIGHT_SERIES_IDS = ['flight-line-static', 'flight-line-animation'];
+
+      // 点击事件处理
+      chart.on('click', function(params) {
+        try {
+          // 如果点击的不是省会点，或已选择两个城市，点击空白处重置
+          if (params.componentType !== 'series' || params.seriesType !== 'effectScatter') {
+            if (selectedCities.from || selectedCities.to) {
+              resetSelection();
+            }
+            return;
+          }
+
+          const cityName = params.name;
+          const cityData = capitalData.find(item => item.name === cityName);
+
+          // 点击已选中的城市，取消选择
+          if (cityData.selected) {
+            cityData.selected = false;
+            if (selectedCities.from === cityName) selectedCities.from = null;
+            if (selectedCities.to === cityName) selectedCities.to = null;
+            updateSelectionStatus();
+            clearFlightRoutes();
+            updateSeries();
+            return;
+          }
+
+          // 选择第一个城市（起点）
+          if (!selectedCities.from) {
+            selectedCities.from = cityName;
+            cityData.selected = true;
+            updateSelectionStatus();
+            updateSeries();
+            return;
+          }
+
+          // 选择第二个城市（终点），且不是同一个城市
+          if (selectedCities.from && selectedCities.from !== cityName) {
+            selectedCities.to = cityName;
+            cityData.selected = true;
+            updateSelectionStatus();
+            updateSeries();
+
+            // 绘制飞线
+            drawFlightRoute(selectedCities.from, selectedCities.to);
+          } else {
+            // 选择同一个城市，视为取消选择
+            resetSelection();
+          }
+        } catch (error) {
+          console.error('点击事件处理错误:', error);
+          resetSelection();
+        }
+      });
+
+      // 更新系列数据
+      function updateSeries() {
+        chart.setOption({
+          series: [{
+            data: capitalData
+          }]
+        }, {
+          notMerge: false,
+          silent: true
+        });
+      }
+
+      // 更新选择状态显示
+      function updateSelectionStatus() {
+        if (!selectedCities.from) {
+          selectionStatus.innerHTML = '请点击选择第一个省会城市';
+        } else if (!selectedCities.to) {
+          selectionStatus.innerHTML = `已选择起点: ${selectedCities.from}<br>请点击选择终点城市`;
+        } else {
+          selectionStatus.innerHTML = `已选择: ${selectedCities.from} → ${selectedCities.to}`;
+        }
+      }
+
+      // 绘制飞线
+      function drawFlightRoute(fromCity, toCity) {
+        const fromCoord = capitalCities[fromCity];
+        const toCoord = capitalCities[toCity];
+
+        const flightData = [{
+          fromName: fromCity,
+          toName: toCity,
+          coords: [fromCoord, toCoord]
+        }];
+
+        addFlightRoutes(flightData);
+      }
+
+      // 添加飞线系列
+      function addFlightRoutes(flightData) {
+        // 清除之前的飞线
+        clearFlightRoutes();
+
+        chart.setOption({
+          series: [
+            // 保留原有系列（省会标记）
+            {
+              type: 'effectScatter',
+              coordinateSystem: 'geo',
+              data: capitalData,
+              symbolSize: 7,
+              showEffectOn: 'render',
+              rippleEffect: {
+                brushType: 'stroke',
+                color:'#00FFFF'
+              },
+              label: {
+                show: true,
+                position: 'right',
+                formatter: '{b}',
+                textStyle: {
+                  color: '#0000FF',
+                  fontSize: 12
+                }
+              },
+              itemStyle: {
+                color: function(params) {
+                  return params.data.selected ? '#FF44AA' : '#00FFFF';
+                },
+                shadowBlur: 10,
+                shadowColor: '#333'
+              },
+              zlevel: 2
+            },
+            // 飞线背景（静态线）
+            {
+              id: FLIGHT_SERIES_IDS[0],
+              type: 'lines',
+              coordinateSystem: 'geo',
+              zlevel: 3,
+              effect: { show: false },
+              lineStyle: {
+                color: '#999',
+                width: 1,
+                opacity: 0.6,
+                curveness: 0.2
+              },
+              data: flightData
+            },
+            // 飞线动画
+            {
+              id: FLIGHT_SERIES_IDS[1],
+              type: 'lines',
+              coordinateSystem: 'geo',
+              zlevel: 4,
+              effect: {
+                show: true,
+                period: 4,
+                trailWidth: 3,
+                trailLength: 0.2,
+                trailColor: '#FF44AA',
+                trailOpacity: 1,
+                symbol: 'circle',
+                symbolSize: 5
+              },
+              lineStyle: {
+                color: 'transparent',
+                width: 0,
+                curveness: 0.2
+              },
+              data: flightData
+            }
+          ]
+        }, {
+          notMerge: false,
+          silent: true
+        });
+      }
+
+      // 清除飞线系列
+      function clearFlightRoutes() {
+        const option = chart.getOption();
+        // 通过ID移除飞线系列
+        option.series = option.series.filter(series =>
+          !FLIGHT_SERIES_IDS.includes(series.id || '')
+        );
+        chart.setOption(option, {
+          notMerge: true,
+          silent: true
+        });
+      }
+
+      // 重置选择（修复版）
+      function resetSelection() {
+        // 重置选择状态
+        selectedCities = { from: null, to: null };
+        capitalData.forEach(item => {
+          item.selected = false;
+        });
+
+        // 清除飞线
+        clearFlightRoutes();
+
+        // 恢复基础配置（关键：重新应用baseOption）
+        chart.setOption(baseOption, {
+          notMerge: true,
+          silent: true
+        });
+
+        updateSelectionStatus();
+      }
+
+      // 重置按钮事件
+      resetBtn.addEventListener('click', resetSelection);
+
       window.addEventListener('resize', () => chart.resize());
     });
 </script>
