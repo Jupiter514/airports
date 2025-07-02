@@ -9,10 +9,10 @@
         body, html {
           height: 100%;
           margin: 0;
-          background-image: url('C919.png'); /* 替换成实际图片路径，如本地图片放项目目录可写"c919.jpg"，在线图片用完整URL */
-          background-size: cover; /* 让背景图覆盖整个页面 */
-          background-position: center; /* 背景图居中显示 */
-          background-repeat: no-repeat; /* 不重复平铺 */
+          background-image: url('C919.png');
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
         }
         #chart-container {
           width: 100%;
@@ -23,27 +23,75 @@
           bottom: 30px;
           left: 30px;
           background: rgba(255,255,255,0.8);
-          padding: 15px 20px; /* 增加内边距，为居中布局留出空间 */
+          padding: 15px 20px;
           border-radius: 8px;
           box-shadow: 0 0 10px rgba(0,0,0,0.2);
           z-index: 100;
+          font-family: 'KaiTi';
+          max-width: 350px;
         }
         #selection-status {
-          text-align: center; /* 状态文本居中 */
-          margin-bottom: 10px; /* 状态文本与按钮间距 */
+          text-align: center;
+          margin-bottom: 10px;
+        }
+        #flight-info {
+          margin: 10px 0;
+          padding: 10px;
+          background: rgba(255,255,255,0.9);
+          border-radius: 6px;
+          border-left: 3px solid #FF1493;
+          max-height: 200px;
+          overflow-y: auto;
+          display: none;
+        }
+        #flight-info-title {
+          text-align: center;
+          color: #D2691E;
+          font-weight: bold;
+          margin-bottom: 8px;
+          font-size: 16px;
+        }
+        .flight-item {
+          margin: 8px 0;
+          padding: 5px;
+          border-bottom: 1px dashed #eee;
+        }
+        .flight-item:last-child {
+          border-bottom: none;
         }
         #reset-btn {
-          display: block; /* 块级元素便于居中 */
-          margin: 0 auto; /* 水平居中 */
+          display: block;
+          margin: 10px auto 0;
           padding: 6px 12px;
           background-color: #007bff;
           color: white;
           border: none;
           border-radius: 4px;
           cursor: pointer;
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 16px;
         }
         #reset-btn:hover {
           background-color: #0069d9;
+        }
+        .music-control {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          background: rgba(0,0,0,0.7);
+          color: white;
+          padding: 8px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          z-index: 200;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-family: 'KaiTi';
+          font-size:16px;
+        }
+        .music-control:hover {
+          background: rgba(0,0,0,0.9);
         }
     </style>
 </head>
@@ -51,15 +99,61 @@
 <div id="chart-container"></div>
 <div class="toolbox" id="toolbox">
     <div id="selection-status">请点击选择第一个省会城市</div>
+    <div id="flight-info">
+        <div id="flight-info-title">航线信息</div>
+        <div id="flight-list"></div>
+    </div>
     <button id="reset-btn">重置选择</button>
 </div>
+
+<div class="music-control" id="music-control">
+    <span id="music-icon">🔊</span>
+    <span id="music-text">播放</span>
+</div>
+
+<audio id="bg-music" loop>
+    <source src="Various Artists - Positive Outlook.mp3" type="audio/mpeg">
+    您的浏览器不支持音频播放
+</audio>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
       const chart = echarts.init(document.getElementById('chart-container'));
       const resetBtn = document.getElementById('reset-btn');
       const selectionStatus = document.getElementById('selection-status');
+      const flightInfo = document.getElementById('flight-info');
+      const flightList = document.getElementById('flight-list');
+      const flightInfoTitle = document.getElementById('flight-info-title');
 
+      // 背景音乐控制
+      const musicControl = document.getElementById('music-control');
+      const musicIcon = document.getElementById('music-icon');
+      const musicText = document.getElementById('music-text');
+      const bgMusic = document.getElementById('bg-music');
+      bgMusic.volume = 0.3;
+      let musicPlayed = false;
+
+      function handleMusicPlay() {
+        if (!musicPlayed) {
+          bgMusic.play().catch(e => console.log('自动播放被阻止:', e));
+          musicPlayed = true;
+        }
+      }
+
+      musicControl.addEventListener('click', function() {
+        handleMusicPlay();
+        if (bgMusic.paused) {
+          bgMusic.play();
+          musicIcon.textContent = '🔊';
+          musicText.textContent = '播放';
+        } else {
+          bgMusic.pause();
+          musicIcon.textContent = '🔇';
+          musicText.textContent = '暂停';
+        }
+      });
+
+      // 省会城市坐标
       const capitalCities = {
         '北京': [116.4074, 39.9042],
         '天津': [117.1901, 39.1256],
@@ -95,17 +189,89 @@
         '台北': [121.5654, 25.0330]
       };
 
-      // 初始化省会数据，添加选中状态
+      // 6月30日贵阳-杭州及杭州-贵阳航班数据（已去除价格信息）
+      const flightRoutes = {
+        '贵阳-杭州': [
+          {
+            flightNo: 'CZ3687',
+            airline: '南方航空',
+            departureTime: '08:25',
+            arrivalTime: '10:40',
+            aircraft: '波音737-800',
+            status: '准点'
+          },
+          {
+            flightNo: 'CZ6175',
+            airline: '南方航空',
+            departureTime: '14:10',
+            arrivalTime: '16:20',
+            aircraft: '空客A320',
+            status: '准点'
+          },
+          {
+            flightNo: 'GJ8765',
+            airline: '长龙航空',
+            departureTime: '16:55',
+            arrivalTime: '19:10',
+            aircraft: '空客A320neo',
+            status: '延误30分钟'
+          },
+          {
+            flightNo: 'CZ3863',
+            airline: '南方航空',
+            departureTime: '19:35',
+            arrivalTime: '21:50',
+            aircraft: '波音737-800',
+            status: '准点'
+          }
+        ],
+        '杭州-贵阳': [
+          {
+            flightNo: 'CZ3688',
+            airline: '南方航空',
+            departureTime: '11:30',
+            arrivalTime: '13:45',
+            aircraft: '波音737-800',
+            status: '准点'
+          },
+          {
+            flightNo: 'GJ8766',
+            airline: '长龙航空',
+            departureTime: '12:45',
+            arrivalTime: '15:00',
+            aircraft: '空客A320neo',
+            status: '准点'
+          },
+          {
+            flightNo: 'CZ6176',
+            airline: '南方航空',
+            departureTime: '17:10',
+            arrivalTime: '19:25',
+            aircraft: '空客A320',
+            status: '延误15分钟'
+          },
+          {
+            flightNo: 'MU5479',
+            airline: '东方航空',
+            departureTime: '20:05',
+            arrivalTime: '22:20',
+            aircraft: '波音737-800',
+            status: '准点'
+          }
+        ]
+      };
+
+      // 初始化省会数据
       const capitalData = Object.entries(capitalCities).map(([name, coords]) => ({
         name,
         value: [...coords, 10],
-        selected: false // 选中状态
+        selected: false
       }));
 
-      // 基础配置（分离配置项，便于重置时保留）
+      // 图表基础配置
       const baseOption = {
         title: {
-           text: '中国地图',
+           text: '6月30日航班数据',
            left: 'center',
            textStyle: {
               color:'#0000FF',
@@ -119,9 +285,7 @@
              fontFamily:'KaiTi',
           },
           trigger: 'item',
-          formatter: function(params) {
-             return params.name
-          }
+          formatter: params => params.name
         },
         geo: {
           map: 'china',
@@ -152,9 +316,7 @@
             }
           },
           itemStyle: {
-            color: function(params) {
-              return params.data.selected ? '#FF44AA' : '#00FFFF';
-            },
+            color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
             shadowBlur: 10,
             shadowColor: '#333'
           },
@@ -164,26 +326,22 @@
 
       chart.setOption(baseOption);
 
-      // 选中的城市（from, to）
+      // 选中城市状态
       let selectedCities = { from: null, to: null };
-      // 飞线系列ID
       const FLIGHT_SERIES_IDS = ['flight-line-static', 'flight-line-animation'];
 
       // 点击事件处理
       chart.on('click', function(params) {
         try {
-          // 如果点击的不是省会点，或已选择两个城市，点击空白处重置
           if (params.componentType !== 'series' || params.seriesType !== 'effectScatter') {
-            if (selectedCities.from || selectedCities.to) {
-              resetSelection();
-            }
+            if (selectedCities.from || selectedCities.to) resetSelection();
             return;
           }
 
           const cityName = params.name;
           const cityData = capitalData.find(item => item.name === cityName);
 
-          // 点击已选中的城市，取消选择
+          // 取消选中
           if (cityData.selected) {
             cityData.selected = false;
             if (selectedCities.from === cityName) selectedCities.from = null;
@@ -191,50 +349,50 @@
             updateSelectionStatus();
             clearFlightRoutes();
             updateSeries();
+            hideFlightInfo();
             return;
           }
 
-          // 选择第一个城市（起点）
+          // 选择起点
           if (!selectedCities.from) {
             selectedCities.from = cityName;
             cityData.selected = true;
             updateSelectionStatus();
             updateSeries();
+            hideFlightInfo();
             return;
           }
 
-          // 选择第二个城市（终点），且不是同一个城市
+          // 选择终点
           if (selectedCities.from && selectedCities.from !== cityName) {
             selectedCities.to = cityName;
             cityData.selected = true;
             updateSelectionStatus();
             updateSeries();
-
-            // 绘制飞线
             drawFlightRoute(selectedCities.from, selectedCities.to);
+
+            // 仅在选择贵阳和杭州时显示航班信息
+            if ((selectedCities.from === '贵阳' && selectedCities.to === '杭州') ||
+                (selectedCities.from === '杭州' && selectedCities.to === '贵阳')) {
+              showFlightInfo(selectedCities.from, selectedCities.to);
+            } else {
+              hideFlightInfo();
+            }
           } else {
-            // 选择同一个城市，视为取消选择
             resetSelection();
           }
         } catch (error) {
-          console.error('点击事件处理错误:', error);
+          console.error('点击事件错误:', error);
           resetSelection();
         }
       });
 
       // 更新系列数据
       function updateSeries() {
-        chart.setOption({
-          series: [{
-            data: capitalData
-          }]
-        }, {
-          notMerge: false,
-          silent: true
-        });
+        chart.setOption({ series: [{ data: capitalData }] }, { notMerge: false, silent: true });
       }
 
-      // 更新选择状态显示
+      // 更新选择状态文本
       function updateSelectionStatus() {
         if (!selectedCities.from) {
           selectionStatus.innerHTML = '请点击选择第一个省会城市';
@@ -249,68 +407,59 @@
       function drawFlightRoute(fromCity, toCity) {
         const fromCoord = capitalCities[fromCity];
         const toCoord = capitalCities[toCity];
-
-        const flightData = [{
-          fromName: fromCity,
-          toName: toCity,
-          coords: [fromCoord, toCoord]
-        }];
-
+        const flightData = [{ fromName: fromCity, toName: toCity, coords: [fromCoord, toCoord] }];
         addFlightRoutes(flightData);
       }
 
       // 添加飞线系列
       function addFlightRoutes(flightData) {
-        // 清除之前的飞线
         clearFlightRoutes();
-
         chart.setOption({
           series: [
-            // 保留原有系列（省会标记）
+            // 保留散点系列
             {
               type: 'effectScatter',
               coordinateSystem: 'geo',
               data: capitalData,
               symbolSize: 7,
               showEffectOn: 'render',
-              rippleEffect: {
-                brushType: 'stroke',
-                color:'#00FFFF'
-              },
+              rippleEffect: { brushType: 'stroke', color: '#00FFFF' },
               label: {
                 show: true,
                 position: 'right',
                 formatter: '{b}',
-                textStyle: {
-                  color: '#0000FF',
-                  fontSize: 12
-                }
+                textStyle: { color: '#0000FF', fontSize: 12 }
               },
               itemStyle: {
-                color: function(params) {
-                  return params.data.selected ? '#FF44AA' : '#00FFFF';
-                },
+                color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
                 shadowBlur: 10,
                 shadowColor: '#333'
               },
               zlevel: 2
             },
-            // 飞线背景（静态线）
+            // 静态飞线
             {
               id: FLIGHT_SERIES_IDS[0],
               type: 'lines',
               coordinateSystem: 'geo',
               zlevel: 3,
-              effect: { show: false },
+              effect: {
+                show: true,
+                period: 3,
+                trailLength: 0,
+                symbol: 'arrow',
+                color: '#FF1493',
+                symbolSize: 8
+              },
               lineStyle: {
-                color: '#999',
-                width: 1,
-                opacity: 0.6,
-                curveness: 0.2
+                color: '#FF1493',
+                width: 2,
+                opacity: 0.8,
+                curveness: 0.3
               },
               data: flightData
             },
-            // 飞线动画
+            // 飞行动画
             {
               id: FLIGHT_SERIES_IDS[1],
               type: 'lines',
@@ -318,64 +467,91 @@
               zlevel: 4,
               effect: {
                 show: true,
-                period: 4,
+                period: 6,
                 trailWidth: 3,
-                trailLength: 0.2,
-                trailColor: '#FF44AA',
-                trailOpacity: 1,
+                trailLength: 0.5,
+                trailColor: '#FF1493',
+                trailOpacity: 0.9,
                 symbol: 'circle',
                 symbolSize: 5
               },
               lineStyle: {
                 color: 'transparent',
                 width: 0,
-                curveness: 0.2
+                curveness: 0.3
               },
               data: flightData
             }
           ]
-        }, {
-          notMerge: false,
-          silent: true
-        });
+        }, { notMerge: false, silent: true });
       }
 
-      // 清除飞线系列
+      // 清除飞线
       function clearFlightRoutes() {
         const option = chart.getOption();
-        // 通过ID移除飞线系列
         option.series = option.series.filter(series =>
           !FLIGHT_SERIES_IDS.includes(series.id || '')
         );
-        chart.setOption(option, {
-          notMerge: true,
-          silent: true
-        });
+        chart.setOption(option, { notMerge: true, silent: true });
       }
 
-      // 重置选择（修复版）
+      // 重置选择
       function resetSelection() {
-        // 重置选择状态
         selectedCities = { from: null, to: null };
-        capitalData.forEach(item => {
-          item.selected = false;
-        });
-
-        // 清除飞线
+        capitalData.forEach(item => item.selected = false);
         clearFlightRoutes();
-
-        // 恢复基础配置（关键：重新应用baseOption）
-        chart.setOption(baseOption, {
-          notMerge: true,
-          silent: true
-        });
-
+        chart.setOption(baseOption, { notMerge: true, silent: true });
         updateSelectionStatus();
+        hideFlightInfo();
+      }
+
+      // 显示航班信息（已去除价格显示）
+      function showFlightInfo(fromCity, toCity) {
+        const routeKey = `${fromCity}-${toCity}`;
+        const routes = flightRoutes[routeKey] || [];
+
+        if (routes.length > 0) {
+          flightInfoTitle.textContent = `${fromCity} → ${toCity} 航班信息 (6月30日)`;
+
+          let html = '';
+          routes.forEach((route, index) => {
+            const statusColor = route.status === '准点' ? '#008000' : '#FF0000';
+
+            html += `
+              <div class="flight-item">
+                <div class="flight-header" style="font-weight: bold; color: #2F4F4F;">
+                  ${route.airline} ${route.flightNo}
+                </div>
+                <div class="flight-details" style="margin-top: 5px;">
+                  <div style="color: #8B0000;">${fromCity} → ${toCity}</div>
+                  <div style="color: #1E90FF; font-size: 16px;">
+                    ${route.departureTime} - ${route.arrivalTime}
+                  </div>
+                  <div style="color: #696969;">机型: ${route.aircraft}</div>
+                  <div style="color: ${statusColor};">状态: ${route.status}</div>
+                </div>
+              </div>
+            `;
+          });
+
+          flightList.innerHTML = html;
+          flightInfo.style.display = 'block';
+        } else {
+          flightInfoTitle.textContent = `${fromCity} → ${toCity} 暂无6月30日航班信息`;
+          flightList.innerHTML = '';
+          flightInfo.style.display = 'block';
+        }
+      }
+
+      // 隐藏航班信息
+      function hideFlightInfo() {
+        flightInfo.style.display = 'none';
       }
 
       // 重置按钮事件
       resetBtn.addEventListener('click', resetSelection);
 
+      // 窗口大小变化时重绘图表
       window.addEventListener('resize', () => chart.resize());
     });
 </script>
