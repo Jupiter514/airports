@@ -13,11 +13,67 @@
           background-size: cover;
           background-position: center;
           background-repeat: no-repeat;
+          overflow: hidden; /* 加载阶段禁止滚动 */
         }
         #chart-container {
           width: 100%;
           height: 100%;
+          opacity: 0; /* 初始隐藏图表 */
+          transition: opacity 0.8s ease; /* 图表显示过渡动画 */
         }
+        /* 加载动画容器 */
+        #loading-container {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(255, 255, 255, 0.92);
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          z-index: 9999;
+          transition: opacity 0.6s ease, visibility 0.6s ease;
+        }
+        /* 旋转飞机图标 */
+        .loading-plane {
+          font-size: 60px;
+          color: #1E90FF;
+          animation: plane-spin 2s linear infinite;
+          margin-bottom: 24px;
+        }
+        /* 加载文本 */
+        .loading-text {
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 22px;
+          color: #333;
+          margin-bottom: 16px;
+          letter-spacing: 1px;
+        }
+        /* 进度条容器 */
+        .loading-progress {
+          width: 320px;
+          height: 8px;
+          background: #f0f0f0;
+          border-radius: 4px;
+          overflow: hidden;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1) inset;
+        }
+        /* 进度条填充 */
+        .loading-progress-bar {
+          height: 100%;
+          background: linear-gradient(90deg, #1E90FF, #00BFFF);
+          border-radius: 4px;
+          width: 0%;
+          transition: width 0.3s ease;
+        }
+        /* 飞机旋转动画关键帧 */
+        @keyframes plane-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        /* 原有工具盒样式 */
         .toolbox {
           position: absolute;
           bottom: 30px;
@@ -96,6 +152,16 @@
     </style>
 </head>
 <body>
+<!-- 加载动画容器 -->
+<div id="loading-container">
+    <div class="loading-plane">✈️</div>
+    <div class="loading-text">正在加载航班数据与地图...</div>
+    <div class="loading-progress">
+        <div class="loading-progress-bar" id="loading-progress-bar"></div>
+    </div>
+</div>
+
+<!-- 原有容器 -->
 <div id="chart-container"></div>
 <div class="toolbox" id="toolbox">
     <div id="selection-status">请点击选择第一个省会城市</div>
@@ -118,441 +184,785 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-      const chart = echarts.init(document.getElementById('chart-container'));
-      const resetBtn = document.getElementById('reset-btn');
-      const selectionStatus = document.getElementById('selection-status');
-      const flightInfo = document.getElementById('flight-info');
-      const flightList = document.getElementById('flight-list');
-      const flightInfoTitle = document.getElementById('flight-info-title');
+        // 1. 初始化加载动画元素
+        const loadingContainer = document.getElementById('loading-container');
+        const loadingProgressBar = document.getElementById('loading-progress-bar');
+        const chartContainer = document.getElementById('chart-container');
+        let loadingProgress = 0;
 
-      // 背景音乐控制
-      const musicControl = document.getElementById('music-control');
-      const musicIcon = document.getElementById('music-icon');
-      const musicText = document.getElementById('music-text');
-      const bgMusic = document.getElementById('bg-music');
-      bgMusic.volume = 0.3;
-      let musicPlayed = false;
+        // 2. 模拟加载进度更新
+        const updateLoadingProgress = (step) => {
+            loadingProgress = Math.min(loadingProgress + step, 100);
+            loadingProgressBar.style.width = `${loadingProgress}%`;
 
-      function handleMusicPlay() {
-        if (!musicPlayed) {
-          bgMusic.play().catch(e => console.log('自动播放被阻止:', e));
-          musicPlayed = true;
-        }
-      }
-
-      musicControl.addEventListener('click', function() {
-        handleMusicPlay();
-        if (bgMusic.paused) {
-          bgMusic.play();
-          musicIcon.textContent = '🔊';
-          musicText.textContent = '播放';
-        } else {
-          bgMusic.pause();
-          musicIcon.textContent = '🔇';
-          musicText.textContent = '暂停';
-        }
-      });
-
-      // 省会城市坐标
-      const capitalCities = {
-        '北京': [116.4074, 39.9042],
-        '天津': [117.1901, 39.1256],
-        '石家庄': [114.5149, 38.0371],
-        '太原': [112.5493, 37.8572],
-        '呼和浩特': [111.6707, 40.8185],
-        '沈阳': [123.4290, 41.7967],
-        '长春': [125.3245, 43.8868],
-        '哈尔滨': [126.6425, 45.7569],
-        '上海': [121.4737, 31.2304],
-        '南京': [118.7674, 32.0415],
-        '杭州': [120.1536, 30.2874],
-        '合肥': [117.2856, 31.8612],
-        '福州': [119.2959, 26.0766],
-        '南昌': [115.8921, 28.6765],
-        '济南': [117.0009, 36.6758],
-        '郑州': [113.6654, 34.7579],
-        '武汉': [114.2985, 30.5843],
-        '长沙': [112.9834, 28.1127],
-        '广州': [113.2806, 23.1251],
-        '南宁': [108.2901, 22.8406],
-        '海口': [110.3311, 20.0319],
-        '重庆': [106.5049, 29.5331],
-        '成都': [104.0658, 30.5728],
-        '贵阳': [106.7134, 26.5784],
-        '昆明': [102.7122, 25.0406],
-        '拉萨': [91.1105, 29.6441],
-        '西安': [108.9480, 34.2631],
-        '兰州': [103.8343, 36.0611],
-        '西宁': [101.7790, 36.6172],
-        '银川': [106.2324, 38.4864],
-        '乌鲁木齐': [87.6177, 43.8267],
-        '台北': [121.5654, 25.0330]
-      };
-
-      // 6月30日贵阳-杭州及杭州-贵阳航班数据（已去除价格信息）
-      const flightRoutes = {
-        '贵阳-杭州': [
-          {
-            flightNo: 'CZ3687',
-            airline: '南方航空',
-            departureTime: '08:25',
-            arrivalTime: '10:40',
-            aircraft: '波音737-800',
-            status: '准点'
-          },
-          {
-            flightNo: 'CZ6175',
-            airline: '南方航空',
-            departureTime: '14:10',
-            arrivalTime: '16:20',
-            aircraft: '空客A320',
-            status: '准点'
-          },
-          {
-            flightNo: 'GJ8765',
-            airline: '长龙航空',
-            departureTime: '16:55',
-            arrivalTime: '19:10',
-            aircraft: '空客A320neo',
-            status: '延误30分钟'
-          },
-          {
-            flightNo: 'CZ3863',
-            airline: '南方航空',
-            departureTime: '19:35',
-            arrivalTime: '21:50',
-            aircraft: '波音737-800',
-            status: '准点'
-          }
-        ],
-        '杭州-贵阳': [
-          {
-            flightNo: 'CZ3688',
-            airline: '南方航空',
-            departureTime: '11:30',
-            arrivalTime: '13:45',
-            aircraft: '波音737-800',
-            status: '准点'
-          },
-          {
-            flightNo: 'GJ8766',
-            airline: '长龙航空',
-            departureTime: '12:45',
-            arrivalTime: '15:00',
-            aircraft: '空客A320neo',
-            status: '准点'
-          },
-          {
-            flightNo: 'CZ6176',
-            airline: '南方航空',
-            departureTime: '17:10',
-            arrivalTime: '19:25',
-            aircraft: '空客A320',
-            status: '延误15分钟'
-          },
-          {
-            flightNo: 'MU5479',
-            airline: '东方航空',
-            departureTime: '20:05',
-            arrivalTime: '22:20',
-            aircraft: '波音737-800',
-            status: '准点'
-          }
-        ]
-      };
-
-      // 初始化省会数据
-      const capitalData = Object.entries(capitalCities).map(([name, coords]) => ({
-        name,
-        value: [...coords, 10],
-        selected: false
-      }));
-
-      // 图表基础配置
-      const baseOption = {
-        title: {
-           text: '6月30日航班数据',
-           left: 'center',
-           textStyle: {
-              color:'#0000FF',
-              fontSize:30,
-              fontFamily: 'KaiTi',
-           }
-        },
-        tooltip: {
-          textStyle:{
-             color:'#00BFFF',
-             fontFamily:'KaiTi',
-          },
-          trigger: 'item',
-          formatter: params => params.name
-        },
-        geo: {
-          map: 'china',
-          roam: true,
-          zoom: 1.2,
-          itemStyle: {
-            normal: { areaColor: '#f0f0f0', borderColor: '#111' },
-            emphasis: { areaColor: '#e0e0e0' }
-          }
-        },
-        series: [{
-          type: 'effectScatter',
-          coordinateSystem: 'geo',
-          data: capitalData,
-          symbolSize: 7,
-          showEffectOn: 'render',
-          rippleEffect: {
-            brushType: 'stroke',
-            color:'#00FFFF'
-          },
-          label: {
-            show: true,
-            position: 'right',
-            formatter: '{b}',
-            textStyle: {
-              color: '#0000FF',
-              fontSize: 12
-            }
-          },
-          itemStyle: {
-            color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
-            shadowBlur: 10,
-            shadowColor: '#333'
-          },
-          zlevel: 2
-        }]
-      };
-
-      chart.setOption(baseOption);
-
-      // 选中城市状态
-      let selectedCities = { from: null, to: null };
-      const FLIGHT_SERIES_IDS = ['flight-line-static', 'flight-line-animation'];
-
-      // 点击事件处理
-      chart.on('click', function(params) {
-        try {
-          if (params.componentType !== 'series' || params.seriesType !== 'effectScatter') {
-            if (selectedCities.from || selectedCities.to) resetSelection();
-            return;
-          }
-
-          const cityName = params.name;
-          const cityData = capitalData.find(item => item.name === cityName);
-
-          // 取消选中
-          if (cityData.selected) {
-            cityData.selected = false;
-            if (selectedCities.from === cityName) selectedCities.from = null;
-            if (selectedCities.to === cityName) selectedCities.to = null;
-            updateSelectionStatus();
-            clearFlightRoutes();
-            updateSeries();
-            hideFlightInfo();
-            return;
-          }
-
-          // 选择起点
-          if (!selectedCities.from) {
-            selectedCities.from = cityName;
-            cityData.selected = true;
-            updateSelectionStatus();
-            updateSeries();
-            hideFlightInfo();
-            return;
-          }
-
-          // 选择终点
-          if (selectedCities.from && selectedCities.from !== cityName) {
-            selectedCities.to = cityName;
-            cityData.selected = true;
-            updateSelectionStatus();
-            updateSeries();
-            drawFlightRoute(selectedCities.from, selectedCities.to);
-
-            // 仅在选择贵阳和杭州时显示航班信息
-            if ((selectedCities.from === '贵阳' && selectedCities.to === '杭州') ||
-                (selectedCities.from === '杭州' && selectedCities.to === '贵阳')) {
-              showFlightInfo(selectedCities.from, selectedCities.to);
+            // 更新提示文本
+            const loadingText = document.querySelector('.loading-text');
+            if (loadingProgress < 30) {
+                loadingText.textContent = '正在加载基础资源...';
+            } else if (loadingProgress < 60) {
+                loadingText.textContent = '正在初始化中国地图数据...';
+            } else if (loadingProgress < 90) {
+                loadingText.textContent = '正在加载9月20日航班数据...';
             } else {
-              hideFlightInfo();
+                loadingText.textContent = '准备就绪，即将进入可视化界面...';
             }
-          } else {
-            resetSelection();
-          }
-        } catch (error) {
-          console.error('点击事件错误:', error);
-          resetSelection();
-        }
-      });
+        };
 
-      // 更新系列数据
-      function updateSeries() {
-        chart.setOption({ series: [{ data: capitalData }] }, { notMerge: false, silent: true });
-      }
+        // 3. 模拟资源加载延迟
+        const mockResourceLoading = () => {
+            return new Promise((resolve) => {
+                const progressSteps = [20, 30, 35, 15];
+                const stepDelay = [800, 1200, 1000, 500];
 
-      // 更新选择状态文本
-      function updateSelectionStatus() {
-        if (!selectedCities.from) {
-          selectionStatus.innerHTML = '请点击选择第一个省会城市';
-        } else if (!selectedCities.to) {
-          selectionStatus.innerHTML = `已选择起点: ${selectedCities.from}<br>请点击选择终点城市`;
-        } else {
-          selectionStatus.innerHTML = `已选择: ${selectedCities.from} → ${selectedCities.to}`;
-        }
-      }
+                let stepIndex = 0;
+                const loadNextStep = () => {
+                    if (stepIndex < progressSteps.length) {
+                        updateLoadingProgress(progressSteps[stepIndex]);
+                        setTimeout(loadNextStep, stepDelay[stepIndex]);
+                        stepIndex++;
+                    } else {
+                        setTimeout(resolve, 600);
+                    }
+                };
 
-      // 绘制飞线
-      function drawFlightRoute(fromCity, toCity) {
-        const fromCoord = capitalCities[fromCity];
-        const toCoord = capitalCities[toCity];
-        const flightData = [{ fromName: fromCity, toName: toCity, coords: [fromCoord, toCoord] }];
-        addFlightRoutes(flightData);
-      }
+                loadNextStep();
+            });
+        };
 
-      // 添加飞线系列
-      function addFlightRoutes(flightData) {
-        clearFlightRoutes();
-        chart.setOption({
-          series: [
-            // 保留散点系列
-            {
-              type: 'effectScatter',
-              coordinateSystem: 'geo',
-              data: capitalData,
-              symbolSize: 7,
-              showEffectOn: 'render',
-              rippleEffect: { brushType: 'stroke', color: '#00FFFF' },
-              label: {
-                show: true,
-                position: 'right',
-                formatter: '{b}',
-                textStyle: { color: '#0000FF', fontSize: 12 }
-              },
-              itemStyle: {
-                color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
-                shadowBlur: 10,
-                shadowColor: '#333'
-              },
-              zlevel: 2
-            },
-            // 静态飞线
-            {
-              id: FLIGHT_SERIES_IDS[0],
-              type: 'lines',
-              coordinateSystem: 'geo',
-              zlevel: 3,
-              effect: {
-                show: true,
-                period: 3,
-                trailLength: 0,
-                symbol: 'arrow',
-                color: '#FF1493',
-                symbolSize: 8
-              },
-              lineStyle: {
-                color: '#FF1493',
-                width: 2,
-                opacity: 0.8,
-                curveness: 0.3
-              },
-              data: flightData
-            },
-            // 飞行动画
-            {
-              id: FLIGHT_SERIES_IDS[1],
-              type: 'lines',
-              coordinateSystem: 'geo',
-              zlevel: 4,
-              effect: {
-                show: true,
-                period: 6,
-                trailWidth: 3,
-                trailLength: 0.5,
-                trailColor: '#FF1493',
-                trailOpacity: 0.9,
-                symbol: 'circle',
-                symbolSize: 5
-              },
-              lineStyle: {
-                color: 'transparent',
-                width: 0,
-                curveness: 0.3
-              },
-              data: flightData
+        // 4. 初始化图表（包含原有完整逻辑）
+        const initChart = async () => {
+            try {
+                // 等待模拟加载完成
+                await mockResourceLoading();
+
+                // 隐藏加载动画，显示图表
+                loadingContainer.style.opacity = '0';
+                chartContainer.style.opacity = '1';
+                setTimeout(() => {
+                    loadingContainer.style.visibility = 'hidden';
+                    document.body.style.overflow = 'auto'; // 恢复滚动
+                }, 600);
+
+                // 初始化图表
+                const chart = echarts.init(document.getElementById('chart-container'));
+                const resetBtn = document.getElementById('reset-btn');
+                const selectionStatus = document.getElementById('selection-status');
+                const flightInfo = document.getElementById('flight-info');
+                const flightList = document.getElementById('flight-list');
+                const flightInfoTitle = document.getElementById('flight-info-title');
+
+                // 背景音乐控制
+                const musicControl = document.getElementById('music-control');
+                const musicIcon = document.getElementById('music-icon');
+                const musicText = document.getElementById('music-text');
+                const bgMusic = document.getElementById('bg-music');
+                bgMusic.volume = 0.3;
+                let musicPlayed = false;
+
+                function handleMusicPlay() {
+                    if (!musicPlayed) {
+                        bgMusic.play().catch(e => console.log('自动播放被阻止:', e));
+                        musicPlayed = true;
+                    }
+                }
+
+                musicControl.addEventListener('click', function() {
+                    handleMusicPlay();
+                    if (bgMusic.paused) {
+                        bgMusic.play();
+                        musicIcon.textContent = '🔊';
+                        musicText.textContent = '播放';
+                    } else {
+                        bgMusic.pause();
+                        musicIcon.textContent = '🔇';
+                        musicText.textContent = '暂停';
+                    }
+                });
+
+                // 省会城市坐标
+                const capitalCities = {
+                    '北京': [116.4074, 39.9042],
+                    '天津': [117.1901, 39.1256],
+                    '石家庄': [114.5149, 38.0371],
+                    '太原': [112.5493, 37.8572],
+                    '呼和浩特': [111.6707, 40.8185],
+                    '沈阳': [123.4290, 41.7967],
+                    '长春': [125.3245, 43.8868],
+                    '哈尔滨': [126.6425, 45.7569],
+                    '上海': [121.4737, 31.2304],
+                    '南京': [118.7674, 32.0415],
+                    '杭州': [120.1536, 30.2874],
+                    '合肥': [117.2856, 31.8612],
+                    '福州': [119.2959, 26.0766],
+                    '南昌': [115.8921, 28.6765],
+                    '济南': [117.0009, 36.6758],
+                    '郑州': [113.6654, 34.7579],
+                    '武汉': [114.2985, 30.5843],
+                    '长沙': [112.9834, 28.1127],
+                    '广州': [113.2806, 23.1251],
+                    '南宁': [108.2901, 22.8406],
+                    '海口': [110.3311, 20.0319],
+                    '重庆': [106.5049, 29.5331],
+                    '成都': [104.0658, 30.5728],
+                    '贵阳': [106.7134, 26.5784],
+                    '昆明': [102.7122, 25.0406],
+                    '拉萨': [91.1105, 29.6441],
+                    '西安': [108.9480, 34.2631],
+                    '兰州': [103.8343, 36.0611],
+                    '西宁': [101.7790, 36.6172],
+                    '银川': [106.2324, 38.4864],
+                    '乌鲁木齐': [87.6177, 43.8267],
+                    '台北': [121.5654, 25.0330]
+                };
+
+                // 9月20日航班数据（完整）
+                const flightRoutes = {
+                    '贵阳-杭州': [
+                        {flightNo: 'CZ8599', airline: '南方航空', departureTime: '计划起飞 8:20（预计滑出 8:20）', arrivalTime: '计划到达 10:40（预计落地 10:40）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6381', airline: '南方航空', departureTime: '计划起飞 14:30（预计滑出 14:30）', arrivalTime: '计划到达 16:45（预计落地 16:45）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6697', airline: '南方航空', departureTime: '计划起飞 18:35（预计滑出 18:35）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '未知', status: '准点'}
+                    ],
+                    '杭州-贵阳': [
+                        {flightNo: 'CZ8600', airline: '南方航空', departureTime: '计划起飞 11:50（预计滑出 11:50）', arrivalTime: '计划到达 14:50（预计落地 14:50）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6382', airline: '南方航空', departureTime: '计划起飞 18:00（预计滑出 18:00）', arrivalTime: '计划到达 20:35（预计落地 20:35）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6698', airline: '南方航空', departureTime: '计划起飞 22:10（预计滑出 22:10）', arrivalTime: '计划到达 00:40+1天（预计落地 00:40+1天）', aircraft: '未知', status: '准点'}
+                    ],
+                    '贵阳-广州': [
+                        {flightNo: 'CZ3661', airline: '南方航空', departureTime: '计划起飞 07:45（预计滑出 07:45）', arrivalTime: '计划到达 09:20（预计落地 09:20）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6412', airline: '南方航空', departureTime: '计划起飞 11:20（预计滑出 11:20）', arrivalTime: '计划到达 13:05（预计落地 13:05）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3691', airline: '南方航空', departureTime: '计划起飞 16:15（预计滑出 16:15）', arrivalTime: '计划到达 17:55（预计落地 17:55）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6394', airline: '南方航空', departureTime: '计划起飞 19:25（预计滑出 19:25）', arrivalTime: '计划到达 21:10（预计落地 21:10）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8801', airline: '南方航空', departureTime: '计划起飞 21:35（预计滑出 21:35）', arrivalTime: '计划到达 23:25（预计落地 23:25）', aircraft: '未知', status: '准点'}
+                    ],
+                    '广州-贵阳': [
+                        {flightNo: 'CZ8802', airline: '南方航空', departureTime: '计划起飞 07:05（预计滑出 07:05）', arrivalTime: '计划到达 09:05（预计落地 09:05）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6393', airline: '南方航空', departureTime: '计划起飞 10:25（预计滑出 10:25）', arrivalTime: '计划到达 12:15（预计落地 12:15）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3692', airline: '南方航空', departureTime: '计划起飞 14:10（预计滑出 14:10）', arrivalTime: '计划到达 16:05（预计落地 16:05）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6411', airline: '南方航空', departureTime: '计划起飞 19:05（预计滑出 19:05）', arrivalTime: '计划到达 20:55（预计落地 20:55）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3662', airline: '南方航空', departureTime: '计划起飞 22:15（预计滑出 22:15）', arrivalTime: '计划到达 23:55（预计落地 23:55）', aircraft: '未知', status: '准点'}
+                    ],
+                    '贵阳-上海': [
+                        {flightNo: 'CZ3651', airline: '南方航空', departureTime: '计划起飞 08:15（预计滑出 08:15）', arrivalTime: '计划到达 10:55（预计落地 10:55）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ3657', airline: '南方航空', departureTime: '计划起飞 10:05（预计滑出 10:05）', arrivalTime: '计划到达 12:50（预计落地 12:50）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ6351', airline: '南方航空', departureTime: '计划起飞 15:50（预计滑出 15:50）', arrivalTime: '计划到达 18:50（预计落地 18:50）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ8263', airline: '南方航空', departureTime: '计划起飞 17:50（预计滑出 17:50）', arrivalTime: '计划到达 20:45（预计落地 20:45）', aircraft: '未知', status: '准点', airport: '虹桥国际机场'}
+                    ],
+                    '上海-贵阳': [
+                        {flightNo: 'CZ3652', airline: '南方航空', departureTime: '计划起飞 12:10（预计滑出 12:10）', arrivalTime: '计划到达 15:15（预计落地 15:15）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ3658', airline: '南方航空', departureTime: '计划起飞 13:55（预计滑出 13:55）', arrivalTime: '计划到达 16:55（预计落地 16:55）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ6352', airline: '南方航空', departureTime: '计划起飞 19:55（预计滑出 19:55）', arrivalTime: '计划到达 22:55（预计落地 22:55）', aircraft: '未知', status: '准点', airport: '浦东国际机场'},
+                        {flightNo: 'CZ8264', airline: '南方航空', departureTime: '计划起飞 22:00（预计滑出 22:00）', arrivalTime: '计划到达 00:50+1天（预计落地 00:50+1天）', aircraft: '未知', status: '准点', airport: '虹桥国际机场'}
+                    ],
+                    '贵阳-北京': [
+                        {flightNo: 'CZ3681', airline: '南方航空', departureTime: '计划起飞 08:00（预计滑出 08:00）', arrivalTime: '计划到达 10:55（预计落地 10:55）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6187', airline: '南方航空', departureTime: '计划起飞 11:00（预计滑出 11:10）', arrivalTime: '计划到达 14:00（预计落地 14:00）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8898', airline: '南方航空', departureTime: '计划起飞 12:15（预计滑出 12:15）', arrivalTime: '计划到达 15:10（预计落地 15:10）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8845', airline: '南方航空', departureTime: '计划起飞 12:15（预计离地 暂无）', arrivalTime: '计划到达 15:10（预计落地 暂无）', aircraft: '未知', status: '待起飞'},
+                        {flightNo: 'CZ3685', airline: '南方航空', departureTime: '计划起飞 13:30（预计滑出 13:30）', arrivalTime: '计划到达 16:30（预计落地 16:30）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3687', airline: '南方航空', departureTime: '计划起飞 15:00（预计滑出 15:00）', arrivalTime: '计划到达 17:50（预计落地 17:50）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3611', airline: '南方航空', departureTime: '计划起飞 16:00（预计滑出 16:00）', arrivalTime: '计划到达 19:15（预计落地 19:15）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8915', airline: '南方航空', departureTime: '计划起飞 16:00（预计离地 暂无）', arrivalTime: '计划到达 19:15（预计落地 暂无）', aircraft: '未知', status: '待起飞'},
+                        {flightNo: 'CZ3653', airline: '南方航空', departureTime: '计划起飞 19:20（预计滑出 19:20）', arrivalTime: '计划到达 22:20（预计落地 22:20）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6185', airline: '南方航空', departureTime: '计划起飞 21:45（预计滑出 21:45）', arrivalTime: '计划到达 00:50+1天（预计落地 00:50+1天）', aircraft: '未知', status: '准点'}
+                    ],
+                    '北京-贵阳': [
+                        {flightNo: 'CZ6186', airline: '南方航空', departureTime: '计划起飞 07:00（预计滑出 07:00）', arrivalTime: '计划到达 10:00（预计落地 10:00）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8846', airline: '南方航空', departureTime: '计划起飞 07:50（预计离地 暂无）', arrivalTime: '计划到达 11:00（预计落地 暂无）', aircraft: '未知', status: '待起飞'},
+                        {flightNo: 'CZ8897', airline: '南方航空', departureTime: '计划起飞 07:50（预计滑出 07:50）', arrivalTime: '计划到达 11:00（预计落地 11:00）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3682', airline: '南方航空', departureTime: '计划起飞 07:50（预计滑出 07:50）', arrivalTime: '计划到达 11:00（预计落地 11:00）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3688', airline: '南方航空', departureTime: '计划起飞 12:00（预计滑出 12:00）', arrivalTime: '计划到达 14:55（预计落地 14:55）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6188', airline: '南方航空', departureTime: '计划起飞 15:15（预计滑出 15:15）', arrivalTime: '计划到达 18:20（预计落地 18:20）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3686', airline: '南方航空', departureTime: '计划起飞 17:45（预计滑出 17:45）', arrivalTime: '计划到达 20:50（预计落地 20:50）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3654', airline: '南方航空', departureTime: '计划起飞 18:55（预计滑出 18:55）', arrivalTime: '计划到达 22:20（预计落地 22:20）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8916', airline: '南方航空', departureTime: '计划起飞 20:30（预计离地 暂无）', arrivalTime: '计划到达 23:30（预计落地 暂无）', aircraft: '未知', status: '待起飞'},
+                        {flightNo: 'CZ3612', airline: '南方航空', departureTime: '计划起飞 20:30（预计滑出 20:30）', arrivalTime: '计划到达 23:30（预计落地 23:30）', aircraft: '未知', status: '准点'}
+                    ],
+                    '贵阳-南京': [
+                        {flightNo: 'CZ3655', airline: '南方航空', departureTime: '计划起飞 08:15（预计滑出 08:15）', arrivalTime: '计划到达 10:40（预计落地 10:40）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8507', airline: '南方航空', departureTime: '计划起飞 11:05（预计滑出 11:05）', arrivalTime: '计划到达 13:20（预计落地 13:20）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8321', airline: '南方航空', departureTime: '计划起飞 14:20（预计滑出 14:20）', arrivalTime: '计划到达 16:45（预计落地 16:45）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ6452', airline: '南方航空', departureTime: '计划起飞 15:00（预计离地 暂无）', arrivalTime: '计划到达 17:25（预计落地 暂无）', aircraft: '未知', status: '待起飞'}
+                    ],
+                    '南京-贵阳': [
+                        {flightNo: 'CZ6451', airline: '南方航空', departureTime: '计划起飞 11:35（预计离地 暂无）', arrivalTime: '计划到达 14:00（预计落地 暂无）', aircraft: '未知', status: '待起飞'},
+                        {flightNo: 'CZ8508', airline: '南方航空', departureTime: '计划起飞 14:20（预计滑出 14:20）', arrivalTime: '计划到达 16:50（预计落地 16:50）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ8322', airline: '南方航空', departureTime: '计划起飞 17:45（预计滑出 17:45）', arrivalTime: '计划到达 20:05（预计落地 20:05）', aircraft: '未知', status: '准点'},
+                        {flightNo: 'CZ3656', airline: '南方航空', departureTime: '计划起飞 18:20（预计滑出 18:20）', arrivalTime: '计划到达 20:45（预计落地 20:45）', aircraft: '未知', status: '准点'}
+                    ],
+                    '贵阳-西宁': [
+                        {flightNo: 'CZ6393', airline: '南方航空', departureTime: '计划起飞 13:15（预计滑出 13:15）', arrivalTime: '计划到达 15:30（预计落地 15:30）', aircraft: '未知', status: '准点'}
+                    ],
+                    '西宁-贵阳': [
+                        {flightNo: 'CZ6394', airline: '南方航空', departureTime: '计划起飞 16:15（预计滑出 16:15）', arrivalTime: '计划到达 18:25（预计落地 18:25）', aircraft: '未知', status: '准点'}
+                    ],
+                    '贵阳-成都': [
+                        {flightNo: 'CA4262', airline: '中国国航', departureTime: '计划起飞 08:30（预计滑出 08:30）', arrivalTime: '计划到达 09:40（预计落地 09:40）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '3U8642', airline: '四川航空', departureTime: '计划起飞 11:15（预计滑出 11:15）', arrivalTime: '计划到达 12:25（预计落地 12:25）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'CZ6482', airline: '南方航空', departureTime: '计划起飞 15:40（预计滑出 15:40）', arrivalTime: '计划到达 16:50（预计落地 16:50）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'EU2238', airline: '成都航空', departureTime: '计划起飞 19:20（预计滑出 19:20）', arrivalTime: '计划到达 20:30（预计落地 20:30）', aircraft: 'ARJ21', status: '准点'}
+                    ],
+                    '成都-贵阳': [
+                        {flightNo: 'CA4261', airline: '中国国航', departureTime: '计划起飞 09:50（预计滑出 09:50）', arrivalTime: '计划到达 11:00（预计落地 11:00）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '3U8641', airline: '四川航空', departureTime: '计划起飞 13:00（预计滑出 13:00）', arrivalTime: '计划到达 14:10（预计落地 14:10）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'CZ6481', airline: '南方航空', departureTime: '计划起飞 17:20（预计滑出 17:20）', arrivalTime: '计划到达 18:30（预计落地 18:30）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'EU2237', airline: '成都航空', departureTime: '计划起飞 21:00（预计滑出 21:00）', arrivalTime: '计划到达 22:10（预计落地 22:10）', aircraft: 'ARJ21', status: '准点'}
+                    ],
+                    '贵阳-重庆': [
+                        {flightNo: 'CZ8171', airline: '南方航空', departureTime: '计划起飞 07:50（预计滑出 07:50）', arrivalTime: '计划到达 08:50（预计落地 08:50）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'OQ2322', airline: '重庆航空', departureTime: '计划起飞 10:30（预计滑出 10:30）', arrivalTime: '计划到达 11:30（预计落地 11:30）', aircraft: '波音737-700', status: '准点'},
+                        {flightNo: 'HU7542', airline: '海南航空', departureTime: '计划起飞 14:10（预计滑出 14:10）', arrivalTime: '计划到达 15:10（预计落地 15:10）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'PN6238', airline: '西部航空', departureTime: '计划起飞 18:40（预计滑出 18:40）', arrivalTime: '计划到达 19:40（预计落地 19:40）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '9C8962', airline: '春秋航空', departureTime: '计划起飞 22:10（预计滑出 22:10）', arrivalTime: '计划到达 23:10（预计落地 23:10）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '重庆-贵阳': [
+                        {flightNo: 'CZ8172', airline: '南方航空', departureTime: '计划起飞 09:30（预计滑出 09:30）', arrivalTime: '计划到达 10:30（预计落地 10:30）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'OQ2321', airline: '重庆航空', departureTime: '计划起飞 12:10（预计滑出 12:10）', arrivalTime: '计划到达 13:10（预计落地 13:10）', aircraft: '波音737-700', status: '准点'},
+                        {flightNo: 'HU7541', airline: '海南航空', departureTime: '计划起飞 16:00（预计滑出 16:00）', arrivalTime: '计划到达 17:00（预计落地 17:00）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'PN6237', airline: '西部航空', departureTime: '计划起飞 20:20（预计滑出 20:20）', arrivalTime: '计划到达 21:20（预计落地 21:20）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '9C8961', airline: '春秋航空', departureTime: '计划起飞 00:05+1天（预计滑出 00:05+1天）', arrivalTime: '计划到达 01:05+1天（预计落地 01:05+1天）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '贵阳-武汉': [
+                        {flightNo: 'CZ3643', airline: '南方航空', departureTime: '计划起飞 09:15（预计滑出 09:15）', arrivalTime: '计划到达 11:20（预计落地 11:20）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'MU2548', airline: '东方航空', departureTime: '计划起飞 13:40（预计滑出 13:40）', arrivalTime: '计划到达 15:45（预计落地 15:45）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'ZH9576', airline: '深圳航空', departureTime: '计划起飞 17:55（预计滑出 17:55）', arrivalTime: '计划到达 20:00（预计落地 20:00）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '武汉-贵阳': [
+                        {flightNo: 'CZ3644', airline: '南方航空', departureTime: '计划起飞 12:00（预计滑出 12:00）', arrivalTime: '计划到达 14:05（预计落地 14:05）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'MU2547', airline: '东方航空', departureTime: '计划起飞 16:30（预计滑出 16:30）', arrivalTime: '计划到达 18:35（预计落地 18:35）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'ZH9575', airline: '深圳航空', departureTime: '计划起飞 20:45（预计滑出 20:45）', arrivalTime: '计划到达 22:50（预计落地 22:50）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-西安': [
+                        {flightNo: 'HU7832', airline: '海南航空', departureTime: '计划起飞 08:45（预计滑出 08:45）', arrivalTime: '计划到达 11:00（预计落地 11:00）', aircraft: '空客A330-200', status: '准点'},
+                        {flightNo: 'MU2338', airline: '东方航空', departureTime: '计划起飞 12:30（预计滑出 12:30）', arrivalTime: '计划到达 14:45（预计落地 14:45）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'GS7652', airline: '天津航空', departureTime: '计划起飞 16:15（预计滑出 16:15）', arrivalTime: '计划到达 18:30（预计落地 18:30）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'CZ6302', airline: '南方航空', departureTime: '计划起飞 20:00（预计滑出 20:00）', arrivalTime: '计划到达 22:15（预计落地 22:15）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '西安-贵阳': [
+                        {flightNo: 'HU7831', airline: '海南航空', departureTime: '计划起飞 09:50（预计滑出 09:50）', arrivalTime: '计划到达 12:05（预计落地 12:05）', aircraft: '空客A330-200', status: '准点'},
+                        {flightNo: 'MU2337', airline: '东方航空', departureTime: '计划起飞 13:40（预计滑出 13:40）', arrivalTime: '计划到达 15:55（预计落地 15:55）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'GS7651', airline: '天津航空', departureTime: '计划起飞 17:20（预计滑出 17:20）', arrivalTime: '计划到达 19:35（预计落地 19:35）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'CZ6301', airline: '南方航空', departureTime: '计划起飞 21:10（预计滑出 21:10）', arrivalTime: '计划到达 23:25（预计落地 23:25）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-沈阳': [
+                        {flightNo: 'CZ6436', airline: '南方航空', departureTime: '计划起飞 08:10（预计滑出 08:10）', arrivalTime: '计划到达 12:25（预计落地 12:25）', aircraft: '波音737-800', status: '准点', airport: '桃仙国际机场'},
+                        {flightNo: 'MU5642', airline: '东方航空', departureTime: '计划起飞 14:30（预计滑出 14:30）', arrivalTime: '计划到达 18:45（预计落地 18:45）', aircraft: '空客A320', status: '准点', airport: '桃仙国际机场'}
+                    ],
+                    '沈阳-贵阳': [
+                        {flightNo: 'CZ6435', airline: '南方航空', departureTime: '计划起飞 13:30（预计滑出 13:30）', arrivalTime: '计划到达 17:45（预计落地 17:45）', aircraft: '波音737-800', status: '准点', airport: '桃仙国际机场'},
+                        {flightNo: 'MU5641', airline: '东方航空', departureTime: '计划起飞 19:30（预计滑出 19:30）', arrivalTime: '计划到达 23:45（预计落地 23:45）', aircraft: '空客A320', status: '准点', airport: '桃仙国际机场'}
+                    ],
+                    '贵阳-福州': [
+                        {flightNo: 'MF8452', airline: '厦门航空', departureTime: '计划起飞 10:20（预计滑出 10:20）', arrivalTime: '计划到达 12:35（预计落地 12:35）', aircraft: '波音737-800', status: '准点', airport: '长乐国际机场'},
+                        {flightNo: 'CZ6542', airline: '南方航空', departureTime: '计划起飞 16:40（预计滑出 16:40）', arrivalTime: '计划到达 18:55（预计落地 18:55）', aircraft: '空客A320', status: '准点', airport: '长乐国际机场'}
+                    ],
+                    '福州-贵阳': [
+                        {flightNo: 'MF8451', airline: '厦门航空', departureTime: '计划起飞 13:20（预计滑出 13:20）', arrivalTime: '计划到达 15:35（预计落地 15:35）', aircraft: '波音737-800', status: '准点', airport: '长乐国际机场'},
+                        {flightNo: 'CZ6541', airline: '南方航空', departureTime: '计划起飞 19:30（预计滑出 19:30）', arrivalTime: '计划到达 21:45（预计落地 21:45）', aircraft: '空客A320', status: '准点', airport: '长乐国际机场'}
+                    ],
+                    '贵阳-长沙': [
+                        {flightNo: 'HU7218', airline: '海南航空', departureTime: '计划起飞 10:15（预计滑出 10:15）', arrivalTime: '计划到达 12:00（预计落地 12:00）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CZ3673', airline: '南方航空', departureTime: '计划起飞 14:30（预计滑出 14:30）', arrivalTime: '计划到达 16:15（预计落地 16:15）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'MU2532', airline: '东方航空', departureTime: '计划起飞 18:45（预计滑出 18:45）', arrivalTime: '计划到达 20:30（预计落地 20:30）', aircraft: '空客A321', status: '准点'}
+                    ],
+                    '长沙-贵阳': [
+                        {flightNo: 'HU7217', airline: '海南航空', departureTime: '计划起飞 08:00（预计滑出 08:00）', arrivalTime: '计划到达 09:45（预计落地 09:45）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CZ3674', airline: '南方航空', departureTime: '计划起飞 12:20（预计滑出 12:20）', arrivalTime: '计划到达 14:05（预计落地 14:05）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'MU2531', airline: '东方航空', departureTime: '计划起飞 16:30（预计滑出 16:30）', arrivalTime: '计划到达 18:15（预计落地 18:15）', aircraft: '空客A321', status: '准点'}
+                    ],
+                    '贵阳-昆明': [
+                        {flightNo: 'MU5718', airline: '东方航空', departureTime: '计划起飞 09:25（预计滑出 09:25）', arrivalTime: '计划到达 10:20（预计落地 10:20）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '3U8692', airline: '四川航空', departureTime: '计划起飞 13:10（预计滑出 13:10）', arrivalTime: '计划到达 14:05（预计落地 14:05）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'CZ6472', airline: '南方航空', departureTime: '计划起飞 17:45（预计滑出 17:45）', arrivalTime: '计划到达 18:40（预计落地 18:40）', aircraft: '波音737-700', status: '准点'},
+                        {flightNo: 'KY8238', airline: '昆明航空', departureTime: '计划起飞 21:10（预计滑出 21:10）', arrivalTime: '计划到达 22:05（预计落地 22:05）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '昆明-贵阳': [
+                        {flightNo: 'MU5717', airline: '东方航空', departureTime: '计划起飞 07:15（预计滑出 07:15）', arrivalTime: '计划到达 08:10（预计落地 08:10）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: '3U8691', airline: '四川航空', departureTime: '计划起飞 11:00（预计滑出 11:00）', arrivalTime: '计划到达 11:55（预计落地 11:55）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'CZ6471', airline: '南方航空', departureTime: '计划起飞 15:30（预计滑出 15:30）', arrivalTime: '计划到达 16:25（预计落地 16:25）', aircraft: '波音737-700', status: '准点'},
+                        {flightNo: 'KY8237', airline: '昆明航空', departureTime: '计划起飞 19:00（预计滑出 19:00）', arrivalTime: '计划到达 19:55（预计落地 19:55）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-南宁': [
+                        {flightNo: 'CZ5352', airline: '南方航空', departureTime: '计划起飞 08:50（预计滑出 08:50）', arrivalTime: '计划到达 10:40（预计落地 10:40）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'GX8832', airline: '北部湾航空', departureTime: '计划起飞 13:25（预计滑出 13:25）', arrivalTime: '计划到达 15:15（预计落地 15:15）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CA8244', airline: '中国国航', departureTime: '计划起飞 17:50（预计滑出 17:50）', arrivalTime: '计划到达 19:40（预计落地 19:40）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '南宁-贵阳': [
+                        {flightNo: 'CZ5351', airline: '南方航空', departureTime: '计划起飞 09:30（预计滑出 09:30）', arrivalTime: '计划到达 11:20（预计落地 11:20）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'GX8831', airline: '北部湾航空', departureTime: '计划起飞 11:15（预计滑出 11:15）', arrivalTime: '计划到达 13:05（预计落地 13:05）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CA8243', airline: '中国国航', departureTime: '计划起飞 15:25（预计滑出 15:25）', arrivalTime: '计划到达 17:15（预计落地 17:15）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-广州': [
+                        {flightNo: 'CZ3661', airline: '南方航空', departureTime: '计划起飞 07:45（预计滑出 07:45）', arrivalTime: '计划到达 09:20（预计落地 09:20）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'CZ6412', airline: '南方航空', departureTime: '计划起飞 11:20（预计滑出 11:20）', arrivalTime: '计划到达 13:05（预计落地 13:05）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'CZ3691', airline: '南方航空', departureTime: '计划起飞 16:15（预计滑出 16:15）', arrivalTime: '计划到达 17:55（预计落地 17:55）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'CZ6394', airline: '南方航空', departureTime: '计划起飞 19:25（预计滑出 19:25）', arrivalTime: '计划到达 21:10（预计落地 21:10）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'CZ8801', airline: '南方航空', departureTime: '计划起飞 21:35（预计滑出 21:35）', arrivalTime: '计划到达 23:25（预计落地 23:25）', aircraft: '空客A321', status: '准点'}
+                    ],
+                    '广州-贵阳': [
+                        {flightNo: 'CZ8802', airline: '南方航空', departureTime: '计划起飞 07:05（预计滑出 07:05）', arrivalTime: '计划到达 09:05（预计落地 09:05）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'CZ6393', airline: '南方航空', departureTime: '计划起飞 10:25（预计滑出 10:25）', arrivalTime: '计划到达 12:15（预计落地 12:15）', aircraft: '空客A320neo', status: '准点'},
+                        {flightNo: 'CZ3692', airline: '南方航空', departureTime: '计划起飞 14:10（预计滑出 14:10）', arrivalTime: '计划到达 16:05（预计落地 16:05）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'CZ6411', airline: '南方航空', departureTime: '计划起飞 19:05（预计滑出 19:05）', arrivalTime: '计划到达 20:55（预计落地 20:55）', aircraft: '空客A321', status: '准点'},
+                        {flightNo: 'CZ3662', airline: '南方航空', departureTime: '计划起飞 22:15（预计滑出 22:15）', arrivalTime: '计划到达 23:55（预计落地 23:55）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-拉萨': [
+                        {flightNo: 'TV9952', airline: '西藏航空', departureTime: '计划起飞 21:55（预计滑出 21:55）', arrivalTime: '计划到达 00:45（预计落地 00:45）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'GJ5194', airline: '长龙航空', departureTime: '计划起飞 21:55（预计滑出 21:55）', arrivalTime: '计划到达 00:45（预计落地 00:45）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'KY6794', airline: '昆明航空', departureTime: '计划起飞 21:55（预计滑出 21:55）', arrivalTime: '计划到达 00:45（预计落地 00:45）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'SC6194', airline: '山东航空', departureTime: '计划起飞 21:55（预计滑出 21:55）', arrivalTime: '计划到达 00:45（预计落地 00:45）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'EU7894', airline: '成都航空', departureTime: '计划起飞 21:55（预计滑出 21:55）', arrivalTime: '计划到达 00:45（预计落地 00:45）', aircraft: '空客A319', status: '准点'}
+                    ],
+                    '拉萨-贵阳': [
+                        {flightNo: 'TV9951', airline: '西藏航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'GJ5193', airline: '长龙航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'KY6793', airline: '昆明航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'SC6193', airline: '山东航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '空客A319', status: '准点'},
+                        {flightNo: 'EU7893', airline: '成都航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 21:05（预计落地 21:05）', aircraft: '空客A319', status: '准点'}
+                    ],
+                    '贵阳-乌鲁木齐': [
+                        {flightNo: 'CZ5613', airline: '南方航空', departureTime: '计划起飞 07:45（预计滑出 07:45）', arrivalTime: '计划到达 11:35（预计落地 11:35）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: '3U1143', airline: '四川航空', departureTime: '计划起飞 19:10（预计滑出 19:10）', arrivalTime: '计划到达 23:10（预计落地 23:10）', aircraft: '空客A330', status: '准点'},
+                        {flightNo: 'GS6477', airline: '天津航空', departureTime: '计划起飞 13:30（预计滑出 13:30）', arrivalTime: '计划到达 17:40（预计落地 17:40）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '乌鲁木齐-贵阳': [
+                        {flightNo: 'GS6478', airline: '天津航空', departureTime: '计划起飞 20:30（预计滑出 20:30）', arrivalTime: '计划到达 00:25（预计落地 00:25）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CZ3436', airline: '南方航空', departureTime: '计划起飞 09:45（预计滑出 09:45）', arrivalTime: '计划到达 13:50（预计落地 13:50）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'MF1255', airline: '厦门航空', departureTime: '计划起飞 09:45（预计滑出 09:45）', arrivalTime: '计划到达 13:50（预计落地 13:50）', aircraft: '波音737-800', status: '准点'}
+                    ],
+                    '贵阳-海口': [
+                        {flightNo: 'HU7086', airline: '海南航空', departureTime: '计划起飞 08:00（预计滑出 08:00）', arrivalTime: '计划到达 10:25（预计落地 10:25）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'JD5767', airline: '京东航空', departureTime: '计划起飞 13:20（预计滑出 13:20）', arrivalTime: '计划到达 15:50（预计落地 15:50）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'GX8836', airline: '北部湾航空', departureTime: '计划起飞 18:15（预计滑出 18:15）', arrivalTime: '计划到达 20:45（预计落地 20:45）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '海口-贵阳': [
+                        {flightNo: 'HU7085', airline: '海南航空', departureTime: '计划起飞 07:00（预计滑出 07:00）', arrivalTime: '计划到达 09:25（预计落地 09:25）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'JD5768', airline: '京东航空', departureTime: '计划起飞 11:00（预计滑出 11:00）', arrivalTime: '计划到达 13:30（预计落地 13:30）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'GX8835', airline: '北部湾航空', departureTime: '计划起飞 16:30（预计滑出 16:30）', arrivalTime: '计划到达 19:00（预计落地 19:00）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '贵阳-天津': [
+                        {flightNo: 'GS7977', airline: '天津航空', departureTime: '计划起飞 07:10（预计滑出 07:10）', arrivalTime: '计划到达 09:55（预计落地 09:55）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CA1482', airline: '中国国际航空', departureTime: '计划起飞 12:30（预计滑出 12:30）', arrivalTime: '计划到达 15:20（预计落地 15:20）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'ZH9887', airline: '深圳航空', departureTime: '计划起飞 17:55（预计滑出 17:55）', arrivalTime: '计划到达 20:45（预计落地 20:45）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '天津-贵阳': [
+                        {flightNo: 'GS7978', airline: '天津航空', departureTime: '计划起飞 10:45（预计滑出 10:45）', arrivalTime: '计划到达 13:35（预计落地 13:35）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CA1481', airline: '中国国际航空', departureTime: '计划起飞 16:00（预计滑出 16:00）', arrivalTime: '计划到达 18:55（预计落地 18:55）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'ZH9888', airline: '深圳航空', departureTime: '计划起飞 21:30（预计滑出 21:30）', arrivalTime: '计划到达 00:25（预计落地 00:25）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '贵阳-南昌': [
+                        {flightNo: 'GJ5281', airline: '长龙航空', departureTime: '计划起飞 08:45（预计滑出 08:45）', arrivalTime: '计划到达 10:35（预计落地 10:35）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CZ6616', airline: '南方航空', departureTime: '计划起飞 13:25（预计滑出 13:25）', arrivalTime: '计划到达 15:15（预计落地 15:15）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'EU2735', airline: '成都航空', departureTime: '计划起飞 18:00（预计滑出 18:00）', arrivalTime: '计划到达 19:50（预计落地 19:50）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '南昌-贵阳': [
+                        {flightNo: 'GJ5282', airline: '长龙航空', departureTime: '计划起飞 11:20（预计滑出 11:20）', arrivalTime: '计划到达 13:10（预计落地 13:10）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'CZ6615', airline: '南方航空', departureTime: '计划起飞 16:00（预计滑出 16:00）', arrivalTime: '计划到达 17:50（预计落地 17:50）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'EU2736', airline: '成都航空', departureTime: '计划起飞 20:30（预计滑出 20:30）', arrivalTime: '计划到达 22:20（预计落地 22:20）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '贵阳-台北': [
+                        {flightNo: 'CI5001', airline: '中华航空', departureTime: '计划起飞 09:00（预计滑出 09:00）', arrivalTime: '计划到达 12:10（预计落地 12:10）', aircraft: '波音777-300', status: '待定'},
+                        {flightNo: 'BR701', airline: '长荣航空', departureTime: '计划起飞 14:30（预计滑出 14:30）', arrivalTime: '计划到达 17:40（预计落地 17:40）', aircraft: '波音787-9', status: '待定'}
+                    ],
+                    '台北-贵阳': [
+                        {flightNo: 'CI5002', airline: '中华航空', departureTime: '计划起飞 13:00（预计滑出 13:00）', arrivalTime: '计划到达 16:10（预计落地 16:10）', aircraft: '波音777-300', status: '待定'},
+                        {flightNo: 'BR702', airline: '长荣航空', departureTime: '计划起飞 18:20（预计滑出 18:20）', arrivalTime: '计划到达 21:30（预计落地 21:30）', aircraft: '波音787-9', status: '待定'}
+                    ],
+                    '贵阳-合肥': [
+                        {flightNo: 'HU7519', airline: '海南航空', departureTime: '计划起飞 07:20（预计滑出 07:20）', arrivalTime: '计划到达 09:30（预计落地 09:30）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'CZ5422', airline: '南方航空', departureTime: '计划起飞 12:15（预计滑出 12:15）', arrivalTime: '计划到达 14:25（预计落地 14:25）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'GS7957', airline: '天津航空', departureTime: '计划起飞 17:45（预计滑出 17:45）', arrivalTime: '计划到达 19:55（预计落地 19:55）', aircraft: '空客A320', status: '准点'}
+                    ],
+                    '合肥-贵阳': [
+                        {flightNo: 'HU7520', airline: '海南航空', departureTime: '计划起飞 10:10（预计滑出 10:10）', arrivalTime: '计划到达 12:20（预计落地 12:20）', aircraft: '波音737-800', status: '准点'},
+                        {flightNo: 'CZ5421', airline: '南方航空', departureTime: '计划起飞 15:00（预计滑出 15:00）', arrivalTime: '计划到达 17:10（预计落地 17:10）', aircraft: '空客A320', status: '准点'},
+                        {flightNo: 'GS7958', airline: '天津航空', departureTime: '计划起飞 20:30（预计滑出 20:30）', arrivalTime: '计划到达 22:40（预计落地 22:40）', aircraft: '空客A320', status: '准点'}
+                    ],
+                        '贵阳-郑州': [
+                        {flightNo: 'CZ3456', airline: '南方航空', departureTime: '计划起飞 08:20（预计滑出 08:20）', arrivalTime: '计划到达 10:40（预计落地 10:40）', aircraft: '未知', status: '准点', airport: '新郑国际机场'},
+                        {flightNo: 'CA1952', airline: '中国国航', departureTime: '计划起飞 12:15（预计滑出 12:15）', arrivalTime: '计划到达 14:35（预计落地 14:35）', aircraft: '未知', status: '准点', airport: '新郑国际机场'},
+                        {flightNo: 'MU5645', airline: '东方航空', departureTime: '计划起飞 16:50（预计滑出 16:50）', arrivalTime: '计划到达 19:10（预计落地 19:10）', aircraft: '未知', status: '准点', airport: '新郑国际机场'}
+                    ],
+                    '郑州-贵阳': [
+                        {flightNo: 'CZ3455', airline: '南方航空', departureTime: '计划起飞 09:00（预计滑出 09:00）', arrivalTime: '计划到达 11:25（预计落地 11:25）', aircraft: '未知', status: '准点', airport: '新郑国际机场'},
+                        {flightNo: 'CA1951', airline: '中国国航', departureTime: '计划起飞 13:00（预计滑出 13:00）', arrivalTime: '计划到达 15:25（预计落地 15:25）', aircraft: '未知', status: '准点', airport: '新郑国际机场'},
+                        {flightNo: 'MU5646', airline: '东方航空', departureTime: '计划起飞 17:30（预计滑出 17:30）', arrivalTime: '计划到达 19:55（预计落地 19:55）', aircraft: '未知', status: '准点', airport: '新郑国际机场'}
+                    ],
+                    '贵阳-济南': [
+                        {flightNo: 'SC1158', airline: '山东航空', departureTime: '计划起飞 07:50（预计滑出 07:50）', arrivalTime: '计划到达 10:35（预计落地 10:35）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'},
+                        {flightNo: 'CZ6428', airline: '南方航空', departureTime: '计划起飞 13:20（预计滑出 13:20）', arrivalTime: '计划到达 16:05（预计落地 16:05）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'},
+                        {flightNo: 'HU7634', airline: '海南航空', departureTime: '计划起飞 18:40（预计滑出 18:40）', arrivalTime: '计划到达 21:25（预计落地 21:25）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'}
+                    ],
+                    '济南-贵阳': [
+                        {flightNo: 'SC1157', airline: '山东航空', departureTime: '计划起飞 08:40（预计滑出 08:40）', arrivalTime: '计划到达 11:25（预计落地 11:25）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'},
+                        {flightNo: 'CZ6427', airline: '南方航空', departureTime: '计划起飞 14:10（预计滑出 14:10）', arrivalTime: '计划到达 16:55（预计落地 16:55）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'},
+                        {flightNo: 'HU7633', airline: '海南航空', departureTime: '计划起飞 19:30（预计滑出 19:30）', arrivalTime: '计划到达 22:15（预计落地 22:15）', aircraft: '未知', status: '准点', airport: '遥墙国际机场'}
+                    ],
+                    '贵阳-太原': [
+                        {flightNo: 'CA1456', airline: '中国国航', departureTime: '计划起飞 09:35（预计滑出 09:35）', arrivalTime: '计划到达 12:05（预计落地 12:05）', aircraft: '未知', status: '准点', airport: '武宿国际机场'},
+                        {flightNo: 'GS7842', airline: '天津航空', departureTime: '计划起飞 15:10（预计滑出 15:10）', arrivalTime: '计划到达 17:40（预计落地 17:40）', aircraft: '未知', status: '准点', airport: '武宿国际机场'},
+                        {flightNo: 'CZ6624', airline: '南方航空', departureTime: '计划起飞 20:05（预计滑出 20:05）', arrivalTime: '计划到达 22:35（预计落地 22:35）', aircraft: '未知', status: '准点', airport: '武宿国际机场'}
+                    ],
+                    '太原-贵阳': [
+                        {flightNo: 'CA1455', airline: '中国国航', departureTime: '计划起飞 07:05（预计滑出 07:05）', arrivalTime: '计划到达 09:35（预计落地 09:35）', aircraft: '未知', status: '准点', airport: '武宿国际机场'},
+                        {flightNo: 'GS7841', airline: '天津航空', departureTime: '计划起飞 12:40（预计滑出 12:40）', arrivalTime: '计划到达 15:10（预计落地 15:10）', aircraft: '未知', status: '准点', airport: '武宿国际机场'},
+                        {flightNo: 'CZ6623', airline: '南方航空', departureTime: '计划起飞 17:30（预计滑出 17:30）', arrivalTime: '计划到达 20:00（预计落地 20:00）', aircraft: '未知', status: '准点', airport: '武宿国际机场'}
+                    ],
+                    '贵阳-石家庄': [
+                        {flightNo: '9C8932', airline: '春秋航空', departureTime: '计划起飞 10:15（预计滑出 10:15）', arrivalTime: '计划到达 12:50（预计落地 12:50）', aircraft: '未知', status: '准点', airport: '正定国际机场'},
+                        {flightNo: 'NS3264', airline: '河北航空', departureTime: '计划起飞 16:40（预计滑出 16:40）', arrivalTime: '计划到达 19:15（预计落地 19:15）', aircraft: '未知', status: '准点', airport: '正定国际机场'}
+                    ],
+                    '石家庄-贵阳': [
+                        {flightNo: '9C8931', airline: '春秋航空', departureTime: '计划起飞 07:10（预计滑出 07:10）', arrivalTime: '计划到达 09:45（预计落地 09:45）', aircraft: '未知', status: '准点', airport: '正定国际机场'},
+                        {flightNo: 'NS3263', airline: '河北航空', departureTime: '计划起飞 13:30（预计滑出 13:30）', arrivalTime: '计划到达 16:05（预计落地 16:05）', aircraft: '未知', status: '准点', airport: '正定国际机场'}
+                    ],
+                    '贵阳-银川': [
+                        {flightNo: 'HU7652', airline: '海南航空', departureTime: '计划起飞 11:25（预计滑出 11:25）', arrivalTime: '计划到达 14:05（预计落地 14:05）', aircraft: '未知', status: '准点', airport: '河东国际机场'},
+                        {flightNo: 'GS7682', airline: '天津航空', departureTime: '计划起飞 18:10（预计滑出 18:10）', arrivalTime: '计划到达 20:50（预计落地 20:50）', aircraft: '未知', status: '准点', airport: '河东国际机场'}
+                    ],
+                    '银川-贵阳': [
+                        {flightNo: 'HU7651', airline: '海南航空', departureTime: '计划起飞 08:05（预计滑出 08:05）', arrivalTime: '计划到达 10:45（预计落地 10:45）', aircraft: '未知', status: '准点', airport: '河东国际机场'},
+                        {flightNo: 'GS7681', airline: '天津航空', departureTime: '计划起飞 14:40（预计滑出 14:40）', arrivalTime: '计划到达 17:20（预计落地 17:20）', aircraft: '未知', status: '准点', airport: '河东国际机场'}
+                    ],
+                    '贵阳-呼和浩特': [
+                        {flightNo: 'CA1156', airline: '中国国航', departureTime: '计划起飞 09:10（预计滑出 09:10）', arrivalTime: '计划到达 12:30（预计落地 12:30）', aircraft: '未知', status: '准点', airport: '白塔国际机场'},
+                        {flightNo: 'GS7432', airline: '天津航空', departureTime: '计划起飞 16:55（预计滑出 16:55）', arrivalTime: '计划到达 20:15（预计落地 20:15）', aircraft: '未知', status: '准点', airport: '白塔国际机场'}
+                    ],
+                    '呼和浩特-贵阳': [
+                        {flightNo: 'CA1155', airline: '中国国航', departureTime: '计划起飞 06:50（预计滑出 06:50）', arrivalTime: '计划到达 10:10（预计落地 10:10）', aircraft: '未知', status: '准点', airport: '白塔国际机场'},
+                        {flightNo: 'GS7431', airline: '天津航空', departureTime: '计划起飞 13:35（预计滑出 13:35）', arrivalTime: '计划到达 16:55（预计落地 16:55）', aircraft: '未知', status: '准点', airport: '白塔国际机场'}
+                    ],
+                    '贵阳-长春': [
+                        {flightNo: 'CZ6438', airline: '南方航空', departureTime: '计划起飞 08:45（预计滑出 08:45）', arrivalTime: '计划到达 13:15（预计落地 13:15）', aircraft: '未知', status: '准点', airport: '龙嘉国际机场'},
+                        {flightNo: 'MU2632', airline: '东方航空', departureTime: '计划起飞 15:30（预计滑出 15:30）', arrivalTime: '计划到达 19:55（预计落地 19:55）', aircraft: '未知', status: '准点', airport: '龙嘉国际机场'}
+                    ],
+                    '长春-贵阳': [
+                        {flightNo: 'CZ6437', airline: '南方航空', departureTime: '计划起飞 08:10（预计滑出 08:10）', arrivalTime: '计划到达 12:40（预计落地 12:40）', aircraft: '未知', status: '准点', airport: '龙嘉国际机场'},
+                        {flightNo: 'MU2631', airline: '东方航空', departureTime: '计划起飞 11:50（预计滑出 11:50）', arrivalTime: '计划到达 16:15（预计落地 16:15）', aircraft: '未知', status: '准点', airport: '龙嘉国际机场'}
+                    ],
+                    '贵阳-哈尔滨': [
+                        {flightNo: 'CZ6256', airline: '南方航空', departureTime: '计划起飞 07:30（预计滑出 07:30）', arrivalTime: '计划到达 12:45（预计落地 12:45）', aircraft: '未知', status: '准点', airport: '太平国际机场'},
+                        {flightNo: 'HU7234', airline: '海南航空', departureTime: '计划起飞 14:20（预计滑出 14:20）', arrivalTime: '计划到达 19:35（预计落地 19:35）', aircraft: '未知', status: '准点', airport: '太平国际机场'},
+                        {flightNo: '9C8952', airline: '春秋航空', departureTime: '计划起飞 19:10（预计滑出 19:10）', arrivalTime: '计划到达 00:25+1天（预计落地 00:25+1天）', aircraft: '未知', status: '准点', airport: '太平国际机场'}
+                    ],
+                    '哈尔滨-贵阳': [
+                        {flightNo: 'CZ6255', airline: '南方航空', departureTime: '计划起飞 08:20（预计滑出 08:20）', arrivalTime: '计划到达 13:35（预计落地 13:35）', aircraft: '未知', status: '准点', airport: '太平国际机场'},
+                        {flightNo: 'HU7233', airline: '海南航空', departureTime: '计划起飞 09:50（预计滑出 09:50）', arrivalTime: '计划到达 15:05（预计落地 15:05）', aircraft: '未知', status: '准点', airport: '太平国际机场'},
+                        {flightNo: '9C8951', airline: '春秋航空', departureTime: '计划起飞 15:10（预计滑出 15:10）', arrivalTime: '计划到达 20:25（预计落地 20:25）', aircraft: '未知', status: '准点', airport: '太平国际机场'}
+                    ]
+                };
+
+                // 初始化省会数据
+                const capitalData = Object.entries(capitalCities).map(([name, coords]) => ({
+                    name,
+                    value: [...coords, 10],
+                    selected: false
+                }));
+
+                // 图表基础配置
+                const baseOption = {
+                    title: {
+                       text: '航班数据',
+                       left: 'center',
+                       textStyle: {
+                          color:'#0000FF',
+                          fontSize:30,
+                          fontFamily: 'KaiTi',
+                       }
+                    },
+                    tooltip: {
+                      textStyle:{
+                         color:'#00BFFF',
+                         fontFamily:'KaiTi',
+                      },
+                      trigger: 'item',
+                      formatter: params => params.name
+                    },
+                    geo: {
+                      map: 'china',
+                      roam: true,
+                      zoom: 1.2,
+                      itemStyle: {
+                        normal: { areaColor: '#f0f0f0', borderColor: '#111' },
+                        emphasis: { areaColor: '#e0e0e0' }
+                      }
+                    },
+                    series: [{
+                      type: 'effectScatter',
+                      coordinateSystem: 'geo',
+                      data: capitalData,
+                      symbolSize: 7,
+                      showEffectOn: 'render',
+                      rippleEffect: {
+                        brushType: 'stroke',
+                        color:'#00FFFF'
+                      },
+                      label: {
+                        show: true,
+                        position: 'right',
+                        formatter: '{b}',
+                        textStyle: {
+                          color: '#0000FF',
+                          fontSize: 12
+                        }
+                      },
+                      itemStyle: {
+                        color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
+                        shadowBlur: 10,
+                        shadowColor: '#333'
+                      },
+                      zlevel: 2
+                    }]
+                };
+
+                chart.setOption(baseOption);
+
+                // 选中城市状态
+                let selectedCities = { from: null, to: null };
+                const FLIGHT_SERIES_IDS = ['flight-line-static', 'flight-line-animation'];
+
+                // 点击事件处理
+                chart.on('click', function(params) {
+                    try {
+                        if (params.componentType !== 'series' || params.seriesType !== 'effectScatter') {
+                            if (selectedCities.from || selectedCities.to) resetSelection();
+                            return;
+                        }
+
+                        const cityName = params.name;
+                        const cityData = capitalData.find(item => item.name === cityName);
+
+                        // 取消选中
+                        if (cityData.selected) {
+                            cityData.selected = false;
+                            if (selectedCities.from === cityName) selectedCities.from = null;
+                            if (selectedCities.to === cityName) selectedCities.to = null;
+                            updateSelectionStatus();
+                            clearFlightRoutes();
+                            updateSeries();
+                            hideFlightInfo();
+                            return;
+                        }
+
+                        // 选择起点
+                        if (!selectedCities.from) {
+                            selectedCities.from = cityName;
+                            cityData.selected = true;
+                            updateSelectionStatus();
+                            updateSeries();
+                            hideFlightInfo();
+                            return;
+                        }
+
+                        // 选择终点
+                        if (selectedCities.from && selectedCities.from !== cityName) {
+                            selectedCities.to = cityName;
+                            cityData.selected = true;
+                            updateSelectionStatus();
+                            updateSeries();
+                            drawFlightRoute(selectedCities.from, selectedCities.to);
+
+                            // 检查是否有对应航线数据
+                            const routeKey1 = `${selectedCities.from}-${selectedCities.to}`;
+                            const routeKey2 = `${selectedCities.to}-${selectedCities.from}`;
+
+                            if (flightRoutes[routeKey1]) {
+                                showFlightInfo(selectedCities.from, selectedCities.to, routeKey1);
+                            } else if (flightRoutes[routeKey2]) {
+                                showFlightInfo(selectedCities.to, selectedCities.from, routeKey2);
+                            } else {
+                                hideFlightInfo();
+                                flightInfoTitle.textContent = `${selectedCities.from} → ${selectedCities.to} 暂无9月20日航班信息`;
+                                flightList.innerHTML = '';
+                                flightInfo.style.display = 'block';
+                            }
+                        } else {
+                            resetSelection();
+                        }
+                    } catch (error) {
+                        console.error('点击事件错误:', error);
+                        resetSelection();
+                    }
+                });
+
+                // 更新系列数据
+                function updateSeries() {
+                    chart.setOption({ series: [{ data: capitalData }] }, { notMerge: false, silent: true });
+                }
+
+                // 更新选择状态文本
+                function updateSelectionStatus() {
+                    if (!selectedCities.from) {
+                        selectionStatus.innerHTML = '请点击选择第一个省会城市';
+                    } else if (!selectedCities.to) {
+                        selectionStatus.innerHTML = `已选择起点: ${selectedCities.from}<br>请点击选择终点城市`;
+                    } else {
+                        selectionStatus.innerHTML = `已选择: ${selectedCities.from} → ${selectedCities.to}`;
+                    }
+                }
+
+                // 绘制飞线
+                function drawFlightRoute(fromCity, toCity) {
+                    const fromCoord = capitalCities[fromCity];
+                    const toCoord = capitalCities[toCity];
+                    const flightData = [{ fromName: fromCity, toName: toCity, coords: [fromCoord, toCoord] }];
+                    addFlightRoutes(flightData);
+                }
+
+                // 添加飞线系列
+                function addFlightRoutes(flightData) {
+                    clearFlightRoutes();
+                    chart.setOption({
+                        series: [
+                            // 保留散点系列
+                            {
+                                type: 'effectScatter',
+                                coordinateSystem: 'geo',
+                                data: capitalData,
+                                symbolSize: 7,
+                                showEffectOn: 'render',
+                                rippleEffect: { brushType: 'stroke', color: '#00FFFF' },
+                                label: {
+                                    show: true,
+                                    position: 'right',
+                                    formatter: '{b}',
+                                    textStyle: { color: '#0000FF', fontSize: 12 }
+                                },
+                                itemStyle: {
+                                    color: params => params.data.selected ? '#FF44AA' : '#00FFFF',
+                                    shadowBlur: 10,
+                                    shadowColor: '#333'
+                                },
+                                zlevel: 2
+                            },
+                            // 静态飞线
+                            {
+                                id: FLIGHT_SERIES_IDS[0],
+                                type: 'lines',
+                                coordinateSystem: 'geo',
+                                zlevel: 3,
+                                effect: {
+                                    show: true,
+                                    period: 3,
+                                    trailLength: 0,
+                                    symbol: 'arrow',
+                                    color: '#FF1493',
+                                    symbolSize: 8
+                                },
+                                lineStyle: {
+                                    color: '#FF1493',
+                                    width: 2,
+                                    opacity: 0.8,
+                                    curveness: 0.3
+                                },
+                                data: flightData
+                            },
+                            // 飞行动画
+                            {
+                                id: FLIGHT_SERIES_IDS[1],
+                                type: 'lines',
+                                coordinateSystem: 'geo',
+                                zlevel: 4,
+                                effect: {
+                                    show: true,
+                                    period: 6,
+                                    trailWidth: 3,
+                                    trailLength: 0.5,
+                                    trailColor: '#FF1493',
+                                    trailOpacity: 0.9,
+                                    symbol: 'circle',
+                                    symbolSize: 5
+                                },
+                                lineStyle: {
+                                    color: 'transparent',
+                                    width: 0,
+                                    curveness: 0.3
+                                },
+                                data: flightData
+                            }
+                        ]
+                    }, { notMerge: false, silent: true });
+                }
+
+                // 清除飞线
+                function clearFlightRoutes() {
+                    const option = chart.getOption();
+                    option.series = option.series.filter(series =>
+                        !FLIGHT_SERIES_IDS.includes(series.id || '')
+                    );
+                    chart.setOption(option, { notMerge: true, silent: true });
+                }
+
+                // 重置选择
+                function resetSelection() {
+                    selectedCities = { from: null, to: null };
+                    capitalData.forEach(item => item.selected = false);
+                    clearFlightRoutes();
+                    chart.setOption(baseOption, { notMerge: true, silent: true });
+                    updateSelectionStatus();
+                    hideFlightInfo();
+                }
+
+                // 显示航班信息
+                function showFlightInfo(fromCity, toCity, routeKey) {
+                    const routes = flightRoutes[routeKey] || [];
+
+                    if (routes.length > 0) {
+                        flightInfoTitle.textContent = `${fromCity} → ${toCity} 航班信息 (9月20日)`;
+
+                        let html = '';
+                        routes.forEach((route, index) => {
+                            const statusColor = route.status === '准点' ? '#008000' : route.status === '待起飞' ? '#FF8C00' : '#FF0000';
+                            const airportText = route.airport ? `（${route.airport}）` : '';
+
+                            html += `
+                                <div class="flight-item">
+                                    <div class="flight-header" style="font-weight: bold; color: #2F4F4F;">
+                                        ${route.airline} ${route.flightNo}
+                                    </div>
+                                    <div class="flight-details" style="margin-top: 5px; font-size: 14px;">
+                                        <div style="color: #8B0000;">${fromCity} → ${toCity}${airportText}</div>
+                                        <div style="color: #1E90FF; margin: 3px 0;">
+                                            起飞: ${route.departureTime}<br>
+                                            到达: ${route.arrivalTime}
+                                        </div>
+                                        <div style="color: #696969;">机型: ${route.aircraft}</div>
+                                        <div style="color: ${statusColor}; font-weight: 500;">状态: ${route.status}</div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+
+                        flightList.innerHTML = html;
+                        flightInfo.style.display = 'block';
+                    } else {
+                        flightInfoTitle.textContent = `${fromCity} → ${toCity} 暂无9月20日航班信息`;
+                        flightList.innerHTML = '';
+                        flightInfo.style.display = 'block';
+                    }
+                }
+
+                // 隐藏航班信息
+                function hideFlightInfo() {
+                    flightInfo.style.display = 'none';
+                }
+
+                // 重置按钮事件
+                resetBtn.addEventListener('click', resetSelection);
+
+                // 窗口大小变化时重绘图表
+                window.addEventListener('resize', () => chart.resize());
+
+            } catch (error) {
+                console.error('初始化图表失败:', error);
+                // 加载失败时也隐藏加载动画
+                loadingContainer.style.opacity = '0';
+                loadingContainer.style.visibility = 'hidden';
+                document.body.style.overflow = 'auto';
             }
-          ]
-        }, { notMerge: false, silent: true });
-      }
+        };
 
-      // 清除飞线
-      function clearFlightRoutes() {
-        const option = chart.getOption();
-        option.series = option.series.filter(series =>
-          !FLIGHT_SERIES_IDS.includes(series.id || '')
-        );
-        chart.setOption(option, { notMerge: true, silent: true });
-      }
-
-      // 重置选择
-      function resetSelection() {
-        selectedCities = { from: null, to: null };
-        capitalData.forEach(item => item.selected = false);
-        clearFlightRoutes();
-        chart.setOption(baseOption, { notMerge: true, silent: true });
-        updateSelectionStatus();
-        hideFlightInfo();
-      }
-
-      // 显示航班信息（已去除价格显示）
-      function showFlightInfo(fromCity, toCity) {
-        const routeKey = `${fromCity}-${toCity}`;
-        const routes = flightRoutes[routeKey] || [];
-
-        if (routes.length > 0) {
-          flightInfoTitle.textContent = `${fromCity} → ${toCity} 航班信息 (6月30日)`;
-
-          let html = '';
-          routes.forEach((route, index) => {
-            const statusColor = route.status === '准点' ? '#008000' : '#FF0000';
-
-            html += `
-              <div class="flight-item">
-                <div class="flight-header" style="font-weight: bold; color: #2F4F4F;">
-                  ${route.airline} ${route.flightNo}
-                </div>
-                <div class="flight-details" style="margin-top: 5px;">
-                  <div style="color: #8B0000;">${fromCity} → ${toCity}</div>
-                  <div style="color: #1E90FF; font-size: 16px;">
-                    ${route.departureTime} - ${route.arrivalTime}
-                  </div>
-                  <div style="color: #696969;">机型: ${route.aircraft}</div>
-                  <div style="color: ${statusColor};">状态: ${route.status}</div>
-                </div>
-              </div>
-            `;
-          });
-
-          flightList.innerHTML = html;
-          flightInfo.style.display = 'block';
-        } else {
-          flightInfoTitle.textContent = `${fromCity} → ${toCity} 暂无6月30日航班信息`;
-          flightList.innerHTML = '';
-          flightInfo.style.display = 'block';
-        }
-      }
-
-      // 隐藏航班信息
-      function hideFlightInfo() {
-        flightInfo.style.display = 'none';
-      }
-
-      // 重置按钮事件
-      resetBtn.addEventListener('click', resetSelection);
-
-      // 窗口大小变化时重绘图表
-      window.addEventListener('resize', () => chart.resize());
+        // 启动初始化流程
+        initChart();
     });
 </script>
 </body>
