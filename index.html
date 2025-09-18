@@ -149,6 +149,90 @@
         .music-control:hover {
           background: rgba(0,0,0,0.9);
         }
+        /* 退出按钮样式 */
+        #exit-btn {
+          position: absolute;
+          top: 20px;
+          left: 20px;
+          background: rgba(220, 53, 69, 0.8);
+          color: white;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 16px;
+          z-index: 200;
+          transition: all 0.3s ease;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        #exit-btn:hover {
+          background: rgba(220, 53, 69, 1);
+          transform: scale(1.05);
+        }
+        /* 结束页面样式 */
+        #end-page {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(135deg, #1E90FF, #00BFFF);
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          z-index: 10000;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity 0.8s ease, visibility 0.8s ease;
+        }
+        #end-page.visible {
+          opacity: 1;
+          visibility: visible;
+        }
+        .end-title {
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 48px;
+          color: white;
+          margin-bottom: 20px;
+          text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        .end-message {
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 24px;
+          color: white;
+          margin-bottom: 40px;
+          text-align: center;
+          max-width: 600px;
+        }
+        .end-plane {
+          font-size: 80px;
+          margin-bottom: 30px;
+          animation: plane-fly 3s ease-in-out infinite;
+        }
+        @keyframes plane-fly {
+          0% { transform: translateX(-50px) rotate(0deg); }
+          50% { transform: translateX(50px) rotate(5deg); }
+          100% { transform: translateX(-50px) rotate(0deg); }
+        }
+        .restart-btn {
+          background: white;
+          color: #1E90FF;
+          border: none;
+          padding: 12px 24px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-family: 'KaiTi', '楷体', serif;
+          font-size: 18px;
+          transition: all 0.3s ease;
+        }
+        .restart-btn:hover {
+          background: #f0f0f0;
+          transform: scale(1.05);
+        }
     </style>
 </head>
 <body>
@@ -177,6 +261,20 @@
     <span id="music-text">播放</span>
 </div>
 
+<!-- 新增退出按钮 -->
+<button id="exit-btn">
+    <span>🚪</span>
+    <span>退出</span>
+</button>
+
+<!-- 新增结束页面 -->
+<div id="end-page">
+    <div class="end-plane">✈️</div>
+    <div class="end-title">航班数据可视化浏览结束</div>
+    <div class="end-message">感谢使用航班数据可视化系统，祝您旅途愉快！</div>
+    <button class="restart-btn">返回查看</button>
+</div>
+
 <audio id="bg-music" loop>
     <source src="Various Artists - Positive Outlook.mp3" type="audio/mpeg">
     您的浏览器不支持音频播放
@@ -202,7 +300,7 @@
             } else if (loadingProgress < 60) {
                 loadingText.textContent = '正在初始化中国地图数据...';
             } else if (loadingProgress < 90) {
-                loadingText.textContent = '正在加载9月20日航班数据...';
+                loadingText.textContent = '正在加载航班数据...';
             } else {
                 loadingText.textContent = '准备就绪，即将进入可视化界面...';
             }
@@ -251,11 +349,16 @@
                 const flightList = document.getElementById('flight-list');
                 const flightInfoTitle = document.getElementById('flight-info-title');
 
+                // 获取新增的DOM元素
+                const exitBtn = document.getElementById('exit-btn');
+                const endPage = document.getElementById('end-page');
+                const restartBtn = document.querySelector('.restart-btn');
+                const bgMusic = document.getElementById('bg-music');
+
                 // 背景音乐控制
                 const musicControl = document.getElementById('music-control');
                 const musicIcon = document.getElementById('music-icon');
                 const musicText = document.getElementById('music-text');
-                const bgMusic = document.getElementById('bg-music');
                 bgMusic.volume = 0.3;
                 let musicPlayed = false;
 
@@ -276,6 +379,24 @@
                         bgMusic.pause();
                         musicIcon.textContent = '🔇';
                         musicText.textContent = '暂停';
+                    }
+                });
+
+                // 退出按钮点击事件
+                exitBtn.addEventListener('click', function() {
+                    // 暂停背景音乐
+                    bgMusic.pause();
+                    // 显示结束页面
+                    endPage.classList.add('visible');
+                });
+
+                // 返回按钮点击事件
+                restartBtn.addEventListener('click', function() {
+                    // 隐藏结束页面
+                    endPage.classList.remove('visible');
+                    // 恢复背景音乐播放状态
+                    if (musicPlayed && musicIcon.textContent === '🔊') {
+                        bgMusic.play();
                     }
                 });
 
@@ -926,7 +1047,9 @@
                                             到达: ${route.arrivalTime}
                                         </div>
                                         <div style="color: #696969;">机型: ${route.aircraft}</div>
-                                        <div style="color: ${statusColor}; font-weight: 500;">状态: ${route.status}</div>
+                                            <div style="margin-top: 3px;">
+                                            状态: <span style="color: ${statusColor}; font-weight: bold;">${route.status}</span>
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -935,33 +1058,34 @@
                         flightList.innerHTML = html;
                         flightInfo.style.display = 'block';
                     } else {
-                        flightInfoTitle.textContent = `${fromCity} → ${toCity} 暂无9月20日航班信息`;
-                        flightList.innerHTML = '';
-                        flightInfo.style.display = 'block';
+                        hideFlightInfo();
                     }
                 }
 
                 // 隐藏航班信息
                 function hideFlightInfo() {
                     flightInfo.style.display = 'none';
+                    flightList.innerHTML = '';
                 }
 
                 // 重置按钮事件
                 resetBtn.addEventListener('click', resetSelection);
 
                 // 窗口大小变化时重绘图表
-                window.addEventListener('resize', () => chart.resize());
+                window.addEventListener('resize', function() {
+                    chart.resize();
+                });
+
+                // 自动播放背景音乐
+                document.addEventListener('click', handleMusicPlay, { once: true });
 
             } catch (error) {
                 console.error('初始化图表失败:', error);
-                // 加载失败时也隐藏加载动画
-                loadingContainer.style.opacity = '0';
-                loadingContainer.style.visibility = 'hidden';
-                document.body.style.overflow = 'auto';
+                loadingContainer.querySelector('.loading-text').textContent = '加载失败，请刷新页面重试';
             }
         };
 
-        // 启动初始化流程
+        // 启动初始化
         initChart();
     });
 </script>
